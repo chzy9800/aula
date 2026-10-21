@@ -152,9 +152,10 @@ aula/
 python -m unittest discover -s tests -v   # 213 项：解析 / 对齐 / 分块 / 存储 / 引擎 / 接口 / WebSocket / JSON 健壮性
 node tests/vad.test.mjs                   # 7 项：断句算法（把 worklet 源码抽出来喂合成音频）
 python examples/e2e_check.py 8781         # 端到端：建课 → 送音频 → 总结 → 听课记录 → 讲义翻译/提问 → 导出
+python examples/live_check.py             # 真实链路：拿当前配置真调模型（连通性/翻译/术语/大纲/追问/听课记录/兜底）
 ```
 
-端到端不依赖任何真实模型：`examples/fake_llm.py` 按提示词返回固定结构，所以 CI 能完整跑通。真实质量必须接真模型看——这一点没有捷径。
+端到端不依赖任何真实模型：`examples/fake_llm.py` 按提示词返回固定结构，所以 CI 能完整跑通。真实质量必须接真模型看——这一点没有捷径，`examples/live_check.py` 就是为此存在的：它不打桩，逐项计时并给出判定（锚点命中率、翻译秒/句），全部通过才退出 0。
 
 ## 已知限制
 
