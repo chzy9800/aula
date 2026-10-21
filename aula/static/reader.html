@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>aula · 讲义对照与圈选提问</title>
+  <link rel="stylesheet" href="/static/reader.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">aula</span>
+      <span class="sub">讲义对照 · 圈选提问</span>
+    </div>
+
+    <nav class="group tabs">
+      <a class="navlink" href="/">上课</a>
+      <a class="navlink active" href="/reader">讲义</a>
+    </nav>
+
+    <label class="file-btn">
+      打开 PDF
+      <input type="file" id="fileInput" accept="application/pdf" hidden />
+    </label>
+
+    <div class="group">
+      <button id="prevBtn" class="ghost" title="上一页">↑</button>
+      <span id="pageLabel" class="page-label">— / —</span>
+      <button id="nextBtn" class="ghost" title="下一页">↓</button>
+    </div>
+
+    <div class="group">
+      <button id="zoomOut" class="ghost">−</button>
+      <span id="zoomLabel" class="mono">100%</span>
+      <button id="zoomIn" class="ghost">＋</button>
+    </div>
+
+    <div class="group modes">
+      <button id="modeRead" class="mode active" data-mode="read">阅读</button>
+      <button id="modeInk" class="mode" data-mode="ink">手写</button>
+      <button id="modeAsk" class="mode" data-mode="ask">圈选提问</button>
+    </div>
+
+    <div class="group lang">
+      <select id="sourceLang" title="讲义语言">
+        <option value="es">西班牙语</option>
+        <option value="en">英语</option>
+        <option value="fr">法语</option>
+        <option value="de">德语</option>
+        <option value="ja">日语</option>
+      </select>
+      <span class="arrow">→</span>
+      <select id="targetLang" title="译文语言">
+        <option value="zh">中文</option>
+        <option value="en">英语</option>
+      </select>
+    </div>
+
+    <div class="group right">
+      <span id="engineBadge" class="badge">—</span>
+      <button id="exportBtn" class="ghost">导出</button>
+    </div>
+  </header>
+
+  <main id="reader" class="reader">
+    <div id="empty" class="empty">
+      <h1>把讲义放进来</h1>
+      <p>打开一份 PDF，左边是原页，右边是逐段译文；不懂的地方圈一下就能问。</p>
+      <p class="dim">文件不会上传：PDF 在浏览器里解析，只有需要翻译/提问的文本会发给模型。</p>
+    </div>
+    <div id="pages"></div>
+  </main>
+
+  <aside id="sidebar" class="sidebar">
+    <div class="side-head">
+      <h2>提问与笔记</h2>
+      <span id="pinCount" class="dim mono">0</span>
+    </div>
+    <div id="pins" class="pins-list">
+      <p class="dim small">圈出一段讲义，点「问导师」，回答会钉在原文旁边，也会出现在这里。</p>
+    </div>
+    <div class="note-block">
+      <div class="side-head"><h2>随手记</h2><span id="noteState" class="dim small"></span></div>
+      <textarea id="noteInput" spellcheck="false" placeholder="这节课的疑问、要复习的点……自动保存。"></textarea>
+    </div>
+  </aside>
+
+  <div id="askBox" class="ask-box hidden">
+    <div class="ask-quote" id="askQuote"></div>
+    <textarea id="askInput" placeholder="这里不懂什么？直接问，不用重述原文。" rows="3"></textarea>
+    <div class="ask-actions">
+      <button id="askCancel" class="ghost">取消</button>
+      <button id="askSubmit" class="primary">问导师</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="/static/reader.js"></script>
+</body>
+</html>

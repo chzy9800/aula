@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>aula · 听课工作台</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">aula</span>
+      <span class="ver">课堂 → 笔记</span>
+    </div>
+
+    <nav class="group tabs">
+      <a class="navlink active" href="/">上课</a>
+      <a class="navlink" href="/reader">讲义</a>
+    </nav>
+
+    <div class="group session-group">
+      <select id="sessionSelect" title="切换课堂"></select>
+      <button id="newSessionBtn" class="ghost" title="新建一节课">新建</button>
+      <button id="deleteSessionBtn" class="ghost" title="删除当前这节课">删除</button>
+    </div>
+
+    <div class="group lang-group">
+      <select id="sourceLang" title="课堂语言"></select>
+      <span class="arrow">→</span>
+      <select id="targetLang" title="笔记语言"></select>
+    </div>
+
+    <div class="group controls">
+      <span id="statusBadge" class="badge idle" title="转写状态">待机</span>
+      <button id="recordBtn" class="rec">开始听课</button>
+      <button id="settingsBtn" class="ghost">设置</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel transcript-panel">
+      <div class="panel-head">
+        <h2>实时转写</h2>
+        <span id="transcriptMeta" class="meta">未开始</span>
+        <label class="toggle"><input type="checkbox" id="autoScroll" checked /> 跟随最新</label>
+      </div>
+      <div id="transcript" class="transcript"></div>
+      <div id="emptyHint" class="empty">
+        点右上角「开始听课」，老师说的每一句会带译文实时出现在这里。<br />
+        没有麦克风或想先试界面，可以直接在「设置」里把转写切到演示模式。
+      </div>
+      <div class="meter"><div id="levelBar" class="level-bar"></div></div>
+    </section>
+
+    <div class="side">
+      <section class="panel notes-panel">
+        <div class="panel-head">
+          <h2>课堂笔记</h2>
+          <span id="saveState" class="meta"></span>
+          <button id="previewBtn" class="ghost">预览</button>
+        </div>
+        <textarea id="noteInput" spellcheck="false"
+          placeholder="随手记。左侧任意一句点「插入」就引用到光标处；笔记会自动保存。"></textarea>
+        <div id="notePreview" class="note-preview hidden"></div>
+      </section>
+
+      <section class="panel summary-panel">
+        <div class="panel-head">
+          <h2>课堂总结</h2>
+          <span id="summaryMeta" class="meta">尚未生成</span>
+          <button id="summarizeBtn" class="primary">一键总结</button>
+        </div>
+        <div id="summary" class="summary"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <span id="statSession">—</span>
+    <span id="statSegments">0 句</span>
+    <span id="statLatency">延迟 —</span>
+    <span id="statProvider">转写 —</span>
+    <span class="spacer"></span>
+    <button id="digestBtn" class="ghost small" title="把整节课压成结构化听课记录">生成听课记录</button>
+    <button id="exportBtn" class="ghost small">导出 Markdown</button>
+  </footer>
+
+  <div id="digestModal" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <h3>听课记录</h3>
+        <button id="closeDigest" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint" id="digestHint">由本课转写分块抽取再全局合成，可直接放进 Obsidian。</p>
+        <pre id="digestBody" class="digest-body"></pre>
+      </div>
+      <div class="modal-foot">
+        <button id="downloadDigest" class="primary">下载 Markdown</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>设置</h3>
+        <button id="closeSettings" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body">
+        <fieldset>
+          <legend>语言方向</legend>
+          <label>课堂语言<select id="cfgSourceLang"></select></label>
+          <label>笔记语言<select id="cfgTargetLang"></select></label>
+          <label class="check"><input type="checkbox" id="cfgTranslate" /> 开启逐句翻译</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>服务商预设</legend>
+          <label>预设<select id="cfgProvider"></select></label>
+          <p class="hint" id="cfgProviderHint">选一个预设会自动填好接口地址与模型。密钥从对应环境变量读取，也可以直接填在下面。</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>转写</legend>
+          <label>实现<select id="cfgAsrProvider"></select></label>
+          <label>模型<input id="cfgAsrModel" placeholder="whisper-1 / small" /></label>
+          <label>接口地址<input id="cfgAsrBaseUrl" placeholder="https://api.openai.com/v1" /></label>
+          <label>密钥<input id="cfgAsrApiKey" type="password" placeholder="sk-..." /></label>
+          <p class="hint">云端转写会把音频发到该接口。课堂内容敏感的话，选本地 faster-whisper。</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>翻译与总结</legend>
+          <label>翻译引擎
+            <select id="cfgTranslateEngine">
+              <option value="llm">大模型翻译（默认，术语更准）</option>
+            </select>
+          </label>
+          <label>专用接口密钥<input id="cfgMtApiKey" type="password" placeholder="选了专用接口才需要" /></label>
+          <label>Azure 区域<input id="cfgMtRegion" placeholder="如 westeurope，其他引擎留空" /></label>
+          <p class="hint" id="cfgMtHint">大模型翻译跟着上面的服务商走；选专用接口则逐句直译，延迟更低（约 0.1–0.3 秒），但不会给术语注原文。</p>
+          <label>接口地址<input id="cfgLlmBaseUrl" placeholder="http://localhost:11434/v1" /></label>
+          <label>模型<input id="cfgLlmModel" placeholder="qwen3:8b / deepseek-chat" /></label>
+          <label>密钥<input id="cfgLlmApiKey" type="password" placeholder="本地 Ollama 填任意值即可" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>断句与自动总结</legend>
+          <label>静音判定（毫秒）<input id="cfgSilenceMs" type="number" min="200" max="3000" step="50" /></label>
+          <label>最短语音（毫秒）<input id="cfgMinSpeechMs" type="number" min="100" max="2000" step="50" /></label>
+          <label>单句上限（毫秒）<input id="cfgMaxSegmentMs" type="number" min="3000" max="60000" step="500" /></label>
+          <label>自动总结间隔（分钟，0 为关闭）<input id="cfgAutoSummary" type="number" min="0" max="120" step="1" /></label>
+        </fieldset>
+
+        <p class="hint" id="cfgResolved"></p>
+      </div>
+      <div class="modal-foot">
+        <button id="saveSettings" class="primary">保存并应用</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

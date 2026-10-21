@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aula"
+version = "0.1.0"
+description = "课堂到笔记：实时转写、逐句翻译、讲义双语对照、结构化听课记录"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "cheng" }]
+keywords = ["lecture", "transcription", "translation", "notes", "pdf", "study"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Education",
+]
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["httpx>=0.27"]
+local = ["faster-whisper>=1.0"]
+
+[project.scripts]
+aula = "aula.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/chzy9800/aula"
+
+[tool.setuptools.packages.find]
+include = ["aula*"]
+
+[tool.setuptools.package-data]
+aula = ["static/*", "static/vendor/*", "examples/*"]
