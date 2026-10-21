@@ -397,3 +397,36 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .anchor-flash { animation: anchorFlash 1s ease-out 2; }
 .block.anchor-flash { background: var(--accent-soft); }
+
+/* ---------- 术语与词库 ---------- */
+
+.terms-block { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.terms-tree { max-height: 26vh; overflow: auto; padding: 2px 4px; }
+.term-row, .vocab-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.term-row:hover, .vocab-row:hover { background: var(--bg-elevated); }
+.term-word { font-weight: 600; color: var(--text); flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-trans { color: var(--text-dim); flex: 1 1 auto; }
+.term-note { color: var(--text-faint); font-size: 11px; flex: 1 1 auto; }
+.term-page { color: var(--text-faint); font-family: var(--mono); font-size: 10.5px; flex: 0 0 auto; }
+.term-row button, .vocab-row button { flex: 0 0 auto; }
+
+.vocab-block { margin-top: 6px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.vocab-list { max-height: 22vh; overflow: auto; padding: 2px 4px; }
+.vocab-block .check { display: flex; align-items: center; gap: 4px; color: var(--text-dim); }
+/* 遮住释义：自测时先自己想，再勾掉 */
+body.vocab-blur .vocab-row .term-trans { filter: blur(5px); transition: filter 0.15s; }
+body.vocab-blur .vocab-row .term-trans:hover { filter: none; }
+
+/* ---------- 讲师提问卡 ---------- */
+
+.card-body { display: flex; flex-direction: column; gap: 6px; }
+.card-row { display: flex; gap: 10px; font-size: 13px; }
+.card-label { flex: 0 0 88px; color: var(--text-faint); }
+.card-value { flex: 1 1 auto; color: var(--text); }

@@ -83,6 +83,25 @@
       </div>
     </div>
 
+    <div class="terms-block">
+      <div class="side-head">
+        <h2>术语词库</h2>
+        <span id="termsState" class="dim small">—</span>
+        <button id="termsBtn" class="ghost small" title="从整份讲义抽取学科术语">提取术语</button>
+      </div>
+      <div id="termsTree" class="terms-tree">
+        <p class="dim small">抽取整份讲义的外文术语，点「收藏」进词库。词库跟着这份讲义存在本地，可遮住释义自测。</p>
+      </div>
+      <div class="vocab-block">
+        <div class="side-head">
+          <h3>词库 <span id="vocabCount" class="dim mono">0</span></h3>
+          <label class="check small"><input type="checkbox" id="vocabHide" /> 遮住释义</label>
+          <button id="vocabExport" class="ghost small">导出</button>
+        </div>
+        <div id="vocabList" class="vocab-list"></div>
+      </div>
+    </div>
+
     <div class="side-head">
       <h2>提问与笔记</h2>
       <span id="pinCount" class="dim mono">0</span>
@@ -101,7 +120,25 @@
     <textarea id="askInput" placeholder="这里不懂什么？直接问，不用重述原文。" rows="3"></textarea>
     <div class="ask-actions">
       <button id="askCancel" class="ghost">取消</button>
+      <button id="askCard" class="ghost" title="把这段整理成一条能直接问老师的问题">整理成提问卡</button>
       <button id="askSubmit" class="primary">问导师</button>
+    </div>
+  </div>
+
+  <div id="cardModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>讲师提问卡</h3>
+        <button id="cardClose" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint" id="cardHint">改两个字就能发给老师，或下课直接照着问。</p>
+        <div id="cardBody" class="card-body"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="cardCopy" class="ghost">复制 Markdown</button>
+        <button id="cardDownload" class="primary">下载 .md</button>
+      </div>
     </div>
   </div>
 

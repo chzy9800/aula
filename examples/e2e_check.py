@@ -97,6 +97,22 @@ def reader_part() -> None:
     assert body["translations"] and all(body["translations"]), body
     print("讲义翻译: %s → %s" % (body["engine"], body["translations"][0][:20]))
 
+    terms = call(
+        "/api/reader/terms",
+        {"pages": [{"index": 1, "text": "El plan general de construccion y el cronograma."}], "target_lang": "zh"},
+        "POST",
+    )["terms"]
+    assert terms and all(t.get("term") and t.get("translation") for t in terms), terms
+    print("术语抽取: %d 个（%s）" % (len(terms), terms[0]["term"]))
+
+    card = call(
+        "/api/reader/lecturer-card",
+        {"selection_text": "El plazo y el cronograma", "page_text": "…", "question": "看不懂怎么排"},
+        "POST",
+    )["card"]
+    assert card["lecturer_question"], card
+    print("提问卡: %s" % card["lecturer_question"][:40])
+
     answer = call(
         "/api/reader/ask",
         {"question": "这句什么意思？", "selection_text": "plan general", "page_text": "…"},

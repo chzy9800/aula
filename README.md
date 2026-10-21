@@ -32,6 +32,10 @@ PDF ──► 段落切分 ──► 逐段翻译 ──► 双语对照 ──�
 
 ![大纲](docs/screenshot-outline.png)
 
+**术语词库**：一键抽取整份讲义的外文术语（提示词明令禁止模型造词），收藏后跟着讲义存在本地；「遮住释义」用来自测，可导出成 Markdown 表格。
+
+![词库](docs/screenshot-vocab.png)
+
 > 截图里的译文来自仓库自带的假模型（`examples/fake_llm.py`），只用来固定输出结构；真实模型的措辞会不同。
 
 **记录** — 点「生成听课记录」，把整节课的转写压成一份带 YAML frontmatter 的 Markdown：核心要点、关键术语表、老师强调/考点、作业预告、待自查问题、你的随手记。样例见 [docs/example-digest.md](docs/example-digest.md)。

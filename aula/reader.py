@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
 
-from . import config, mt as mtmod, outline as outlinemod
+from . import config, mt as mtmod, outline as outlinemod, study as studymod
 from .llm import LLMClient, LLMError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -163,6 +163,71 @@ def create_router(settings: config.Settings) -> APIRouter:
                 _OUTLINE_CACHE.pop(next(iter(_OUTLINE_CACHE)))
             _OUTLINE_CACHE[key] = response
         return response
+
+    @router.post("/api/reader/terms")
+    async def terms(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """逐页抽取学科术语，作为词库的原料。
+
+        只收"原文里真实出现的外文词"——提示词明令禁止模型造词，
+        否则词库会迅速被幻觉词填满。
+        """
+        raw_pages = payload.get("pages") or []
+        pages: List[Dict[str, Any]] = []
+        for item in raw_pages:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            pages.append({"index": int(item.get("index") or 0), "text": text})
+        if not pages:
+            raise HTTPException(status_code=400, detail="讲义没有可提取的文本（可能是扫描件）")
+
+        target_lang = str(payload.get("target_lang") or settings.target_lang)
+        key = outlinemod.cache_key(pages, "terms:" + target_lang)
+        if key in _OUTLINE_CACHE:
+            return dict(_OUTLINE_CACHE[key], cached=True)
+
+        client = LLMClient(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.resolved_summary_model(),
+            timeout=90,
+            retries=1,
+        )
+        try:
+            found = await asyncio.to_thread(studymod.extract_terms, pages, client, target_lang)
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        response = {"terms": found, "model": settings.resolved_summary_model(), "cached": False}
+        if found:
+            if len(_OUTLINE_CACHE) >= _OUTLINE_CACHE_LIMIT:
+                _OUTLINE_CACHE.pop(next(iter(_OUTLINE_CACHE)))
+            _OUTLINE_CACHE[key] = response
+        return response
+
+    @router.post("/api/reader/lecturer-card")
+    async def lecturer_card(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """把圈选内容整理成一条给老师的具体问题。"""
+        selection = str(payload.get("selection_text") or "")
+        page_text = str(payload.get("page_text") or "")
+        question = str(payload.get("question") or "")
+
+        client = LLMClient(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.resolved_summary_model(),
+            timeout=60,
+            retries=1,
+        )
+        try:
+            card = await asyncio.to_thread(
+                studymod.build_lecturer_card, selection, page_text, question, client
+            )
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"card": card, "model": settings.resolved_summary_model()}
 
     @router.post("/api/reader/ask")
     async def ask(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:

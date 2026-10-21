@@ -76,6 +76,33 @@ def pick_reply(system: str, user: str) -> str:
         return json.dumps(SYNTH, ensure_ascii=False)
     if "课堂记录整理助手" in system:
         return json.dumps(SUMMARY, ensure_ascii=False)
+    if "术语抽取员" in system:
+        page = 1
+        for line in user.split("\n"):
+            m = re.match(r"\s*\[\[PAGE_(\d+)\]\]", line)
+            if m:
+                page = int(m.group(1))
+        return json.dumps(
+            {
+                "terms": [
+                    {"term": "plan general de construccion", "translation": "总体施工计划", "note": "施工组织总纲", "page_index": page},
+                    {"term": "cronograma", "translation": "进度表", "note": "活动与日期", "page_index": page},
+                ]
+            },
+            ensure_ascii=False,
+        )
+    if "提问卡编辑" in system:
+        return json.dumps(
+            {
+                "module": "UF2",
+                "topic": "总体施工计划",
+                "current_understanding": "我以为计划只是排个时间表",
+                "attempt": "对照了讲义第 1 节，没看懂它和进度表的关系",
+                "stuck_point": "分不清计划里哪些内容是给进度表做输入",
+                "lecturer_question": "总体施工计划里的哪几项，是排进度表时必须先定下来的？",
+            },
+            ensure_ascii=False,
+        )
     if "讲义分析员" in system:
         return json.dumps(_fake_outline(user), ensure_ascii=False)
     if "同声传译" in system:

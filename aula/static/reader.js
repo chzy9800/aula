@@ -29,6 +29,8 @@ const state = {
   engine: "",
   selection: null,    // 当前圈选 { pageNum, rect, text, image }
   outline: null,      // 大纲树 [{display_title, search_anchor, page_index, difficulty_score, subtopics}]
+  terms: [],          // 抽取到的术语 [{term, translation, note, page_index}]
+  vocab: [],          // 词库（收藏过的术语，按讲义指纹存本地）
   inkStroke: null,
   pinPop: null,
 };
@@ -110,6 +112,10 @@ async function openBuffer(buffer, name, size) {
   $("noteInput").value = state.notes;
   state.outline = store("outline");
   renderOutline();
+  state.terms = [];
+  state.vocab = store("vocab") || [];
+  renderVocab();
+  $("termsState").textContent = state.terms.length ? `${state.terms.length} 个` : "—";
   $("outlineState").textContent = state.outline ? "已加载" : "未生成";
   $("empty").classList.add("hidden");
   $("pages").innerHTML = "";
@@ -504,6 +510,205 @@ function setMode(mode) {
   hideAskBox();
 }
 
+/* ---------- 术语与词库 ---------- */
+
+async function extractTerms() {
+  if (!state.pages.length) {
+    toast("先打开一份 PDF", "error");
+    return;
+  }
+  const button = $("termsBtn");
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "抽取中…";
+  const pages = state.pages.map((record) => ({ index: record.pageNum, text: record.text || "" }));
+  try {
+    const result = await api("/api/reader/terms", {
+      method: "POST",
+      body: JSON.stringify({ pages, target_lang: state.targetLang }),
+    });
+    state.terms = result.terms;
+    renderTerms();
+    $("termsState").textContent = `${result.terms.length} 个${result.cached ? " · 缓存" : ""}`;
+  } catch (error) {
+    $("termsState").textContent = "失败";
+    toast("术语抽取失败：" + error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function renderTerms() {
+  const tree = $("termsTree");
+  if (!state.terms.length) {
+    tree.innerHTML = '<p class="dim small">没有抽到术语。扫描件没有文字层，抽不了。</p>';
+    return;
+  }
+  tree.innerHTML = state.terms
+    .map((term, index) => {
+      const saved = isSaved(term.term);
+      return `<div class="term-row" data-term="${escapeHtml(term.term)}">
+        <span class="term-word">${escapeHtml(term.term)}</span>
+        <span class="term-trans">${escapeHtml(term.translation || "—")}</span>
+        ${term.note ? `<span class="term-note">${escapeHtml(term.note)}</span>` : ""}
+        <span class="term-page">P${term.page_index || "?"}</span>
+        <button class="ghost small" data-save="${index}" ${saved ? "disabled" : ""}>${saved ? "已收藏" : "收藏"}</button>
+      </div>`;
+    })
+    .join("");
+  for (const button of tree.querySelectorAll("[data-save]")) {
+    button.onclick = () => saveTerm(Number(button.dataset.save));
+  }
+}
+
+function isSaved(word) {
+  return state.vocab.some((item) => item.term.toLowerCase() === String(word).toLowerCase());
+}
+
+function saveTerm(index) {
+  const term = state.terms[index];
+  if (!term || isSaved(term.term)) return;
+  state.vocab.push({ ...term });
+  store("vocab", state.vocab);
+  renderTerms();
+  renderVocab();
+  toast(`已收藏「${term.term}」`, "ready");
+}
+
+function renderVocab() {
+  $("vocabCount").textContent = String(state.vocab.length);
+  const list = $("vocabList");
+  if (!state.vocab.length) {
+    list.innerHTML = '<p class="dim small">还没有收藏的术语。</p>';
+    return;
+  }
+  list.innerHTML = state.vocab
+    .map(
+      (term, index) => `<div class="vocab-row">
+        <span class="term-word">${escapeHtml(term.term)}</span>
+        <span class="term-trans">${escapeHtml(term.translation || "—")}</span>
+        <span class="term-page">P${term.page_index || "?"}</span>
+        <button class="ghost small" data-drop="${index}" title="从词库移除">×</button>
+      </div>`
+    )
+    .join("");
+  for (const button of list.querySelectorAll("[data-drop]")) {
+    button.onclick = () => {
+      state.vocab.splice(Number(button.dataset.drop), 1);
+      store("vocab", state.vocab);
+      renderTerms();
+      renderVocab();
+    };
+  }
+}
+
+function exportVocab() {
+  if (!state.vocab.length) {
+    toast("词库是空的", "error");
+    return;
+  }
+  const lines = ["# 术语词库 · " + state.fileName, ""];
+  lines.push("| 术语 | 译名 | 说明 | 页 |");
+  lines.push("| --- | --- | --- | --- |");
+  for (const term of state.vocab) {
+    lines.push(`| ${term.term} | ${term.translation || "—"} | ${term.note || "—"} | ${term.page_index || "?"} |`);
+  }
+  download(state.fileName + "-术语词库.md", lines.join("\n"));
+}
+
+/* ---------- 讲师提问卡 ---------- */
+
+async function makeLecturerCard() {
+  if (!state.selection) {
+    toast("先在讲义上圈一段", "error");
+    return;
+  }
+  const question = $("askInput").value.trim();
+  if (!question) {
+    toast("先写一句你卡在哪里", "error");
+    return;
+  }
+  const button = $("askCard");
+  button.disabled = true;
+  $("cardHint").textContent = "整理中…";
+  try {
+    const result = await api("/api/reader/lecturer-card", {
+      method: "POST",
+      body: JSON.stringify({
+        selection_text: state.selection.text,
+        page_text: state.pages[state.selection.pageNum - 1]?.text || "",
+        question,
+      }),
+    });
+    state.card = result.card;
+    renderCard();
+    $("cardModal").classList.remove("hidden");
+    $("cardHint").textContent = "改两个字就能发给老师，或下课直接照着问。";
+  } catch (error) {
+    $("cardHint").textContent = "整理失败：" + error.message;
+    toast("提问卡失败：" + error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderCard() {
+  const card = state.card || {};
+  const labels = {
+    module: "模块",
+    topic: "知识点",
+    current_understanding: "我目前的理解",
+    attempt: "我已经试过",
+    stuck_point: "我卡在",
+    lecturer_question: "想问的问题",
+  };
+  $("cardBody").innerHTML = Object.entries(labels)
+    .map(([key, label]) => `<div class="card-row"><span class="card-label">${label}</span><span class="card-value">${escapeHtml(card[key] || "—")}</span></div>`)
+    .join("");
+}
+
+function cardMarkdown() {
+  const card = state.card || {};
+  const labels = {
+    module: "模块",
+    topic: "知识点",
+    current_understanding: "我目前的理解",
+    attempt: "我已经试过",
+    stuck_point: "我卡在",
+    lecturer_question: "想问的问题",
+  };
+  const lines = ["## 讲师提问卡", ""];
+  if (state.fileName) lines.push(`> 讲义：${state.fileName}`, "");
+  for (const [key, label] of Object.entries(labels)) {
+    lines.push(`**${label}**：${card[key] || "—"}`, "");
+  }
+  return lines.join("\n");
+}
+
+function copyCard() {
+  if (!state.card) return;
+  navigator.clipboard.writeText(cardMarkdown()).then(
+    () => toast("已复制 Markdown", "ready"),
+    () => toast("复制失败，手动选一下", "error")
+  );
+}
+
+function downloadCard() {
+  if (!state.card) return;
+  download(state.fileName + "-提问卡.md", cardMarkdown());
+}
+
+function download(name, text) {
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name.replace(/[\\/:*?"<>|]/g, "-");
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 /* ---------- 圈选提问 ---------- */
 
 document.addEventListener("pointerdown", (event) => {
@@ -836,6 +1041,13 @@ function exportMarkdown() {
 
 function bind() {
   $("outlineBtn").onclick = generateOutline;
+  $("termsBtn").onclick = extractTerms;
+  $("vocabHide").onchange = () => document.body.classList.toggle("vocab-blur", $("vocabHide").checked);
+  $("vocabExport").onclick = exportVocab;
+  $("askCard").onclick = makeLecturerCard;
+  $("cardClose").onclick = () => $("cardModal").classList.add("hidden");
+  $("cardCopy").onclick = copyCard;
+  $("cardDownload").onclick = downloadCard;
   $("fileInput").onchange = (event) => {
     const file = event.target.files?.[0];
     if (file) openFile(file).catch((error) => toast("打开失败：" + error.message, "error"));
