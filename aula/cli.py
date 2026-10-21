@@ -276,6 +276,15 @@ def load_turns(
     return _document_to_turns(document), document.source_lang
 
 
+def _reject_non_transcript(path: Path) -> None:
+    """讲义请走 /reader：把 PDF 当转写喂进来只会得到一堆乱码句子。"""
+    if path.suffix.lower() in (".pdf", ".docx", ".pptx", ".epub"):
+        raise SystemExit(
+            "%s 不是转写文件。听课记录只接受 txt / srt / vtt；"
+            "读讲义请起服务后打开 /reader。" % path.name
+        )
+
+
 def _document_to_turns(document: Document) -> List[BilingualTurn]:
     turns = [BilingualTurn(source=segment.text, start=segment.start) for segment in document.segments]
     return clean_turns(turns, document.source_lang)
@@ -305,6 +314,7 @@ def cmd_preview(args: argparse.Namespace) -> int:
     if not path.exists():
         print("找不到文件：%s" % path, file=sys.stderr)
         return 1
+    _reject_non_transcript(path)
     turns, language = load_turns(
         path,
         Path(args.original).expanduser() if args.original else None,
@@ -335,6 +345,7 @@ def cmd_notes(args: argparse.Namespace) -> int:
     if not path.exists():
         print("找不到文件：%s" % path, file=sys.stderr)
         return 1
+    _reject_non_transcript(path)
 
     turns, language = load_turns(
         path,
