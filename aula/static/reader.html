@@ -102,6 +102,17 @@
       </div>
     </div>
 
+    <div class="mistake-block">
+      <div class="side-head">
+        <h2>错题本 <span id="mistakeCount" class="dim mono">0</span></h2>
+        <button id="mistakeSummaryBtn" class="ghost small" title="让模型找共性盲区、给复习顺序">错题总结</button>
+        <button id="mistakeExport" class="ghost small">导出</button>
+      </div>
+      <div id="mistakeList" class="mistake-list">
+        <p class="dim small">提问后点「记为错题」，这里会积累卡住过的位置；攒几条就能让模型找共性盲区。</p>
+      </div>
+    </div>
+
     <div class="side-head">
       <h2>提问与笔记</h2>
       <span id="pinCount" class="dim mono">0</span>
@@ -116,10 +127,13 @@
   </aside>
 
   <div id="askBox" class="ask-box hidden">
+    <div id="askThread" class="ask-thread"></div>
     <div class="ask-quote" id="askQuote"></div>
     <textarea id="askInput" placeholder="这里不懂什么？直接问，不用重述原文。" rows="3"></textarea>
     <div class="ask-actions">
       <button id="askCancel" class="ghost">取消</button>
+      <button id="askNew" class="ghost hidden" title="清空当前对话，重新问">新问题</button>
+      <button id="askMistake" class="ghost hidden" title="把这段对话记为错题">记为错题</button>
       <button id="askCard" class="ghost" title="把这段整理成一条能直接问老师的问题">整理成提问卡</button>
       <button id="askSubmit" class="primary">问导师</button>
     </div>
@@ -138,6 +152,22 @@
       <div class="modal-foot">
         <button id="cardCopy" class="ghost">复制 Markdown</button>
         <button id="cardDownload" class="primary">下载 .md</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mistakeModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>错题总结</h3>
+        <button id="mistakeClose" class="ghost">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint" id="mistakeHint">让模型从错题里找共性盲区、排复习顺序、给可执行的练习。</p>
+        <div id="mistakeBody" class="mistake-body"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="mistakeDownload" class="primary">下载 .md</button>
       </div>
     </div>
   </div>

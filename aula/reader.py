@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
 
-from . import config, mt as mtmod, outline as outlinemod, study as studymod
+from . import chat as chatmod, config, mt as mtmod, outline as outlinemod, study as studymod
 from .llm import LLMClient, LLMError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -228,6 +228,52 @@ def create_router(settings: config.Settings) -> APIRouter:
         except LLMError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {"card": card, "model": settings.resolved_summary_model()}
+
+    @router.post("/api/reader/chat")
+    async def reader_chat(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """圈选后的连续追问。
+
+        历史由前端保存（按讲义指纹存 localStorage），服务端无状态：
+        不收历史、不建会话表。换模型或重启服务都不影响已有对话。
+        """
+        history = payload.get("history") or []
+        message = str(payload.get("message") or "")
+        client = LLMClient(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.resolved_summary_model(),
+            timeout=90,
+            retries=1,
+        )
+        try:
+            answer = await asyncio.to_thread(
+                chatmod.chat,
+                client,
+                str(payload.get("selection_text") or ""),
+                str(payload.get("page_text") or ""),
+                history,
+                message,
+            )
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"answer": answer, "model": settings.resolved_summary_model()}
+
+    @router.post("/api/reader/mistakes")
+    async def mistakes(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """错题总结：共性盲区、复习顺序、可执行的练习建议。"""
+        records = payload.get("records") or []
+        client = LLMClient(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=settings.resolved_summary_model(),
+            timeout=90,
+            retries=1,
+        )
+        try:
+            summary = await asyncio.to_thread(chatmod.summarize_mistakes, records, client)
+        except LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {**summary, "model": settings.resolved_summary_model()}
 
     @router.post("/api/reader/ask")
     async def ask(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:

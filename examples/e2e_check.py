@@ -105,6 +105,35 @@ def reader_part() -> None:
     assert terms and all(t.get("term") and t.get("translation") for t in terms), terms
     print("术语抽取: %d 个（%s）" % (len(terms), terms[0]["term"]))
 
+    follow_up = call(
+        "/api/reader/chat",
+        {
+            "selection_text": "El plazo y el cronograma",
+            "page_text": "…",
+            "history": [{"role": "user", "content": "怎么排？"}, {"role": "assistant", "content": "按活动排。"}],
+            "message": "那计划里哪几项要先定？",
+        },
+        "POST",
+    )["answer"]
+    assert follow_up and "进度表" in follow_up, follow_up
+    print("连续追问: %s" % follow_up.replace("\n", " ")[:36])
+
+    mistakes = call(
+        "/api/reader/mistakes",
+        {
+            "records": [
+                {"where": "P3 · El plazo", "question": "计划里哪些决定进度表？", "answer": "人力与材料"},
+                {"where": "P5 · materiales", "question": "为什么材料晚工期也涨？", "answer": "活动停摆"},
+            ]
+        },
+        "POST",
+    )
+    assert mistakes["common_blind_spots"], mistakes
+    assert mistakes["review_order"] and mistakes["practice"], mistakes
+    print("错题总结: %d 条盲区 / 复习 %d 步 / 练习 %d 项" % (
+        len(mistakes["common_blind_spots"]), len(mistakes["review_order"]), len(mistakes["practice"])
+    ))
+
     card = call(
         "/api/reader/lecturer-card",
         {"selection_text": "El plazo y el cronograma", "page_text": "…", "question": "看不懂怎么排"},

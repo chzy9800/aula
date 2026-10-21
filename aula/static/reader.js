@@ -31,6 +31,8 @@ const state = {
   outline: null,      // 大纲树 [{display_title, search_anchor, page_index, difficulty_score, subtopics}]
   terms: [],          // 抽取到的术语 [{term, translation, note, page_index}]
   vocab: [],          // 词库（收藏过的术语，按讲义指纹存本地）
+  chat: null,         // 当前圈选对应的连续对话 { key, selection, pageNum, history: [{role, content}] }
+  mistakes: [],       // 错题记录 [{id, where, question, answer, note, status, createdAt}]
   inkStroke: null,
   pinPop: null,
 };
@@ -115,6 +117,8 @@ async function openBuffer(buffer, name, size) {
   state.terms = [];
   state.vocab = store("vocab") || [];
   renderVocab();
+  state.mistakes = store("mistakes") || [];
+  renderMistakes();
   $("termsState").textContent = state.terms.length ? `${state.terms.length} 个` : "—";
   $("outlineState").textContent = state.outline ? "已加载" : "未生成";
   $("empty").classList.add("hidden");
@@ -617,6 +621,219 @@ function exportVocab() {
   download(state.fileName + "-术语词库.md", lines.join("\n"));
 }
 
+/* ---------- 连续对话与错题本 ---------- */
+
+function chatKey(text) {
+  // 同一段文字的圈选视为同一个卡片：用原文指纹做键
+  let hash = 2166136261;
+  const seed = String(text || "").slice(0, 400);
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function saveChat() {
+  const chats = store("chats") || {};
+  if (state.chat && state.chat.history.length) {
+    chats[state.chat.key] = {
+      selection: state.chat.selection,
+      pageNum: state.chat.pageNum,
+      history: state.chat.history.slice(-20),
+      updated: new Date().toISOString(),
+    };
+  }
+  store("chats", chats);
+}
+
+function restoreChat(selectionText, pageNum) {
+  const chats = store("chats") || {};
+  const key = chatKey(selectionText);
+  const saved = chats[key];
+  if (saved && Array.isArray(saved.history) && saved.history.length) {
+    return { key, selection: selectionText, pageNum, history: saved.history };
+  }
+  return { key, selection: selectionText, pageNum, history: [] };
+}
+
+function renderThread() {
+  const box = $("askThread");
+  const active = Boolean(state.chat && state.chat.history.length);
+  $("askNew").classList.toggle("hidden", !active);
+  $("askMistake").classList.toggle("hidden", !active);
+  if (!active) {
+    box.innerHTML = "";
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  box.innerHTML = state.chat.history
+    .map((item) =>
+      item.role === "user"
+        ? `<div class="bubble me">${escapeHtml(item.content)}</div>`
+        : `<div class="bubble tutor">${escapeHtml(item.content)}</div>`
+    )
+    .join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+function newChat() {
+  state.chat = { key: state.chat?.key || "", selection: state.chat?.selection || "", pageNum: state.chat?.pageNum || 0, history: [] };
+  const chats = store("chats") || {};
+  if (state.chat.key) delete chats[state.chat.key];
+  store("chats", chats);
+  renderThread();
+  $("askInput").focus();
+}
+
+function saveMistake() {
+  if (!state.chat || !state.chat.history.length) {
+    toast("先问一轮再记", "error");
+    return;
+  }
+  const history = state.chat.history;
+  const question = history.filter((item) => item.role === "user").map((item) => item.content).join(" → ") || "（未记录）";
+  const answer = [...history].reverse().find((item) => item.role === "assistant")?.content || "";
+  const where = `P${state.chat.pageNum} · ${(state.chat.selection || "").slice(0, 30)}`;
+  if (state.mistakes.some((item) => item.where === where && item.question === question)) {
+    toast("这段已经记过了", "error");
+    return;
+  }
+  state.mistakes.push({
+    id: `m${Date.now().toString(36)}`,
+    where,
+    question,
+    answer,
+    note: "",
+    status: "open",
+    createdAt: new Date().toISOString(),
+  });
+  store("mistakes", state.mistakes);
+  renderMistakes();
+  toast("已记入错题本", "ready");
+}
+
+function renderMistakes() {
+  $("mistakeCount").textContent = String(state.mistakes.length);
+  const list = $("mistakeList");
+  if (!state.mistakes.length) {
+    list.innerHTML = '<p class="dim small">还没有错题。提问后点「记为错题」，攒几条就能让模型找共性盲区。</p>';
+    return;
+  }
+  list.innerHTML = state.mistakes
+    .map(
+      (item, index) => `<div class="mistake-row ${item.status === "done" ? "done" : ""}">
+        <button class="mistake-toggle" data-toggle="${index}" title="点击切换掌握状态">${item.status === "done" ? "✓" : "○"}</button>
+        <div class="mistake-main">
+          <div class="mistake-where">${escapeHtml(item.where)}</div>
+          <div class="mistake-q">${escapeHtml(item.question)}</div>
+        </div>
+        <button class="ghost small" data-drop="${index}" title="删除">×</button>
+      </div>`
+    )
+    .join("");
+  for (const button of list.querySelectorAll("[data-toggle]")) {
+    button.onclick = () => {
+      const item = state.mistakes[Number(button.dataset.toggle)];
+      item.status = item.status === "done" ? "open" : "done";
+      store("mistakes", state.mistakes);
+      renderMistakes();
+    };
+  }
+  for (const button of list.querySelectorAll("[data-drop]")) {
+    button.onclick = () => {
+      state.mistakes.splice(Number(button.dataset.drop), 1);
+      store("mistakes", state.mistakes);
+      renderMistakes();
+    };
+  }
+}
+
+async function summarizeMistakes() {
+  if (!state.mistakes.length) {
+    toast("错题本是空的", "error");
+    return;
+  }
+  const button = $("mistakeSummaryBtn");
+  button.disabled = true;
+  $("mistakeHint").textContent = "分析中…";
+  $("mistakeBody").innerHTML = "";
+  try {
+    const result = await api("/api/reader/mistakes", {
+      method: "POST",
+      body: JSON.stringify({ records: state.mistakes }),
+    });
+    state.mistakeSummary = result;
+    renderMistakeSummary();
+    $("mistakeModal").classList.remove("hidden");
+    $("mistakeHint").textContent = `基于 ${result.count} 条错题 · 模型 ${result.model}`;
+  } catch (error) {
+    $("mistakeHint").textContent = "分析失败：" + error.message;
+    toast("错题总结失败：" + error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderMistakeSummary() {
+  const summary = state.mistakeSummary || {};
+  const blocks = [];
+  if (summary.common_blind_spots?.length) {
+    blocks.push(`<h4>共性盲区</h4><ul>${summary.common_blind_spots.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+  }
+  if (summary.review_order?.length) {
+    blocks.push(`<h4>复习顺序</h4><ol>${summary.review_order.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>`);
+  }
+  if (summary.practice?.length) {
+    blocks.push(
+      `<h4>练什么</h4>${summary.practice
+        .map((item) => `<div class="practice-row"><b>${escapeHtml(item.focus)}</b><span>${escapeHtml(item.how)}</span></div>`)
+        .join("")}`
+    );
+  }
+  $("mistakeBody").innerHTML = blocks.join("") || '<p class="dim">没有分析出内容。</p>';
+}
+
+function mistakeSummaryMarkdown() {
+  const summary = state.mistakeSummary || {};
+  const lines = ["# 错题总结 · " + state.fileName, "", `基于 ${summary.count || 0} 条错题`, ""];
+  if (summary.common_blind_spots?.length) {
+    lines.push("## 共性盲区", "");
+    summary.common_blind_spots.forEach((item) => lines.push(`- ${item}`));
+    lines.push("");
+  }
+  if (summary.review_order?.length) {
+    lines.push("## 复习顺序", "");
+    summary.review_order.forEach((item, index) => lines.push(`${index + 1}. ${item}`));
+    lines.push("");
+  }
+  if (summary.practice?.length) {
+    lines.push("## 练什么", "");
+    summary.practice.forEach((item) => lines.push(`- **${item.focus}**：${item.how}`));
+  }
+  return lines.join("\n");
+}
+
+function downloadMistakeSummary() {
+  if (!state.mistakeSummary) return;
+  download(state.fileName + "-错题总结.md", mistakeSummaryMarkdown());
+}
+
+function exportMistakes() {
+  if (!state.mistakes.length) {
+    toast("错题本是空的", "error");
+    return;
+  }
+  const lines = ["# 错题本 · " + state.fileName, ""];
+  for (const item of state.mistakes) {
+    lines.push(`## ${item.status === "done" ? "✓" : "○"} ${item.where}`, "");
+    lines.push(`**问题**：${item.question}`, "");
+    if (item.answer) lines.push(`**当时的回答**：${item.answer}`, "");
+  }
+  download(state.fileName + "-错题本.md", lines.join("\n"));
+}
+
 /* ---------- 讲师提问卡 ---------- */
 
 async function makeLecturerCard() {
@@ -761,6 +978,8 @@ function openAskBox(record, rect, paperBounds) {
   const box = $("askBox");
   $("askQuote").textContent = selectionText || "（这一块没有可提取文字，可能圈的是图或公式）";
   $("askInput").value = "";
+  state.chat = restoreChat(selectionText, record.pageNum);
+  renderThread();
   box.classList.remove("hidden");
 
   const top = Math.min(paperBounds.bottom + window.scrollY - 60, window.innerHeight - 260);
@@ -827,7 +1046,26 @@ async function submitAsk() {
   const button = $("askSubmit");
   button.disabled = true;
   button.textContent = "思考中…";
+  const followUp = Boolean(state.chat && state.chat.history.length);
   try {
+    if (followUp) {
+      const reply = await api("/api/reader/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          selection_text: state.chat.selection,
+          page_text: record.text || "",
+          history: state.chat.history,
+          message: question,
+        }),
+      });
+      state.chat.history.push({ role: "user", content: question });
+      state.chat.history.push({ role: "assistant", content: reply.answer });
+      saveChat();
+      renderThread();
+      $("askInput").value = "";
+      return;
+    }
+
     const result = await api("/api/reader/ask", {
       method: "POST",
       body: JSON.stringify({
@@ -850,8 +1088,19 @@ async function submitAsk() {
     store("pins", state.pins);
     drawPins(record);
     renderPinsList();
-    hideAskBox();
-    openPin(pin);
+    state.chat = {
+      key: chatKey(state.selection.text),
+      selection: state.selection.text,
+      pageNum: state.selection.pageNum,
+      history: [
+        { role: "user", content: question },
+        { role: "assistant", content: result.answer },
+      ],
+    };
+    saveChat();
+    renderThread();
+    $("askInput").value = "";
+    $("askInput").focus();
   } catch (error) {
     toast("提问失败：" + error.message, "error");
   } finally {
@@ -1045,6 +1294,12 @@ function bind() {
   $("vocabHide").onchange = () => document.body.classList.toggle("vocab-blur", $("vocabHide").checked);
   $("vocabExport").onclick = exportVocab;
   $("askCard").onclick = makeLecturerCard;
+  $("askNew").onclick = newChat;
+  $("askMistake").onclick = saveMistake;
+  $("mistakeSummaryBtn").onclick = summarizeMistakes;
+  $("mistakeExport").onclick = exportMistakes;
+  $("mistakeClose").onclick = () => $("mistakeModal").classList.add("hidden");
+  $("mistakeDownload").onclick = downloadMistakeSummary;
   $("cardClose").onclick = () => $("cardModal").classList.add("hidden");
   $("cardCopy").onclick = copyCard;
   $("cardDownload").onclick = downloadCard;

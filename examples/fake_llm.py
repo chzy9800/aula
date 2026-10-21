@@ -76,6 +76,28 @@ def pick_reply(system: str, user: str) -> str:
         return json.dumps(SYNTH, ensure_ascii=False)
     if "课堂记录整理助手" in system:
         return json.dumps(SUMMARY, ensure_ascii=False)
+    if "错题分析员" in system:
+        return json.dumps(
+            {
+                "common_blind_spots": [
+                    "把「计划」当成时间表，忽略人力与材料的约束",
+                    "分不清计划与进度表的先后关系",
+                ],
+                "review_order": ["先分清计划与进度表各自解决什么问题", "再练材料延误对工期的影响链"],
+                "practice": [
+                    {"focus": "拆解总体计划", "how": "把讲义第 1 节的计划列成 6 个组成部分，标出每项的输入"},
+                    {"focus": "延误传导", "how": "假设材料晚两天，写出受影响的活动与新的工期"},
+                ],
+            },
+            ensure_ascii=False,
+        )
+    if "连续追问" in system:
+        # 连续追问：答完再抛一个可选的问题（教学策略：最多追问一个）
+        return (
+            "接着上面说：进度表是计划的输出，不是计划本身——计划先定人力和材料，"
+            "进度表才排得出来。\n\n"
+            "要不要拿讲义第 3 节那个例子，把计划拆成进度表的一行行试一次？"
+        )
     if "术语抽取员" in system:
         page = 1
         for line in user.split("\n"):

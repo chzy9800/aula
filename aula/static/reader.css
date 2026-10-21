@@ -430,3 +430,71 @@ body.vocab-blur .vocab-row .term-trans:hover { filter: none; }
 .card-row { display: flex; gap: 10px; font-size: 13px; }
 .card-label { flex: 0 0 88px; color: var(--text-faint); }
 .card-value { flex: 1 1 auto; color: var(--text); }
+
+/* ---------- 连续对话与错题本 ---------- */
+
+.ask-box { max-height: 78vh; display: flex; flex-direction: column; }
+.ask-thread {
+  max-height: 34vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.bubble {
+  max-width: 92%;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bubble.me { align-self: flex-end; background: var(--accent-soft); color: var(--text); }
+.bubble.tutor { align-self: flex-start; background: var(--bg-elevated); color: var(--text-dim); }
+.ask-quote { flex: 0 0 auto; }
+.ask-box textarea { flex: 0 0 auto; }
+
+.mistake-block { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.mistake-list { max-height: 24vh; overflow: auto; padding: 2px 4px; }
+.mistake-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.mistake-row:hover { background: var(--bg-elevated); }
+.mistake-row.done .mistake-q { color: var(--text-faint); text-decoration: line-through; }
+.mistake-toggle {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.mistake-row.done .mistake-toggle { color: var(--ok); border-color: var(--ok); }
+.mistake-main { flex: 1 1 auto; min-width: 0; }
+.mistake-where { color: var(--text-faint); font-family: var(--mono); font-size: 10.5px; }
+.mistake-q { color: var(--text-dim); }
+
+.mistake-body h4 { margin: 12px 0 6px; font-size: 13px; color: var(--text); }
+.mistake-body ul, .mistake-body ol { margin: 0 0 8px; padding-left: 18px; }
+.mistake-body li { font-size: 12.5px; color: var(--text-dim); line-height: 1.6; }
+.practice-row {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  margin-bottom: 5px;
+  font-size: 12.5px;
+}
+.practice-row b { flex: 0 0 auto; color: var(--text); }
+.practice-row span { color: var(--text-dim); }
