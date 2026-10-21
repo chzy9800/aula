@@ -33,6 +33,7 @@ const state = {
   vocab: [],          // 词库（收藏过的术语，按讲义指纹存本地）
   chat: null,         // 当前圈选对应的连续对话 { key, selection, pageNum, history: [{role, content}] }
   mistakes: [],       // 错题记录 [{id, where, question, answer, note, status, createdAt}]
+  degradedNotified: false,  // 降级提示只弹一次，不要每页都刷
   inkStroke: null,
   pinPop: null,
 };
@@ -354,6 +355,11 @@ async function translateRecord(record) {
     });
     state.engine = result.engine;
     $("engineBadge").textContent = result.engine === "llm" ? "模型翻译" : "免密钥翻译";
+    if (result.degraded && !state.degradedNotified) {
+      // 模型限流/不可用时后端会自动降级——要让用户知道译文不是模型出的
+      state.degradedNotified = true;
+      toast(`模型暂不可用，本页已切换${result.engine === "llm" ? "模型" : "免密钥"}翻译`, "error");
+    }
     result.translations.forEach((text, index) => {
       blocks[index].translated = text || "";
       const el = record.transEl.querySelector(`[data-block="${index}"]`);

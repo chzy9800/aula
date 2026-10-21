@@ -145,9 +145,21 @@ _LIBRE = {"zh": "zh", "es": "es", "en": "en", "ja": "ja", "ko": "ko", "fr": "fr"
 class GoogleFreeMT(BaseMT):
     """Google 翻译的网页接口，无需任何密钥。
 
-    实测（2026-10）：``clients5.google.com/translate_a/t?client=dict-chrome-ex``
-    可用；老的 ``translate.googleapis.com/translate_a/single`` 在本机会被拦
-    （返回 "Sorry..." 页面），所以先走 clients5，失败再退到老接口。
+    2026-10-22 逐个实测（同一台机器、同一个 UA）：
+
+    ============================================  ======  ==========================
+    端点                                         结果    说明
+    ============================================  ======  ==========================
+    translate.google.com/?op=translate            302     网页不是接口，body 为空
+    translate.google.com/translate_a/single       429     返回 "Sorry..." 拦截页
+    translate.google.com/m                        302     要 cookie/同意页
+    clients5.google.com/translate_a/t             200     扁平数组 ["译文"]，在用
+    clients5.google.com/translate_a/single        200     嵌套数组，同主机备用
+    clients5.google.com + client=gtx/webapp        403/拦  客户号也不通用
+    ============================================  ======  ==========================
+
+    所以顺序是：先 clients5 的 /t，再同主机的 /single，最后才试已废弃的老主机
+    （换网络也许能通，留着不亏）。前两个都返回可解析 JSON 才算成功。
 
     注意：这是 Google 未公开的接口，不属于任何 SLA。密集请求会被按 IP
     限流，商业用途请改用官方 Cloud Translation。
@@ -155,30 +167,32 @@ class GoogleFreeMT(BaseMT):
 
     name = "google_free"
 
-    def __init__(self, timeout: int = 15, host: str = "") -> None:
+    DEFAULT_BASE = "https://clients5.google.com/translate_a"
+
+    def __init__(self, timeout: int = 15, base: str = "") -> None:
         self.timeout = timeout
-        self.host = host or MT_BY_ID["google_free"].endpoint
+        base = (base or self.DEFAULT_BASE).rstrip("/")
+        # 也接受旧的完整端点写法（.../translate_a/t），归一成 base 再派生路径
+        self.base = base[:-2] if base.endswith("/t") else base
+
+    # 按实测可用性排序：同主机两条路径都通，老主机已废弃但留作最后希望
+    PATHS = (
+        ("{base}/t", {"client": "dict-chrome-ex"}),
+        ("{base}/single", {"client": "dict-chrome-ex", "dt": "t"}),
+        ("https://translate.googleapis.com/translate_a/single", {"client": "gtx", "dt": "t"}),
+    )
 
     def translate(self, text: str, source: str, target: str) -> str:
         src = _GOOGLE.get(source, source)
         dst = _GOOGLE.get(target, target)
 
-        # 首选：dict-chrome-ex（返回 ["译文"]）
-        query = urllib.parse.urlencode({"client": "dict-chrome-ex", "sl": src, "tl": dst, "q": text})
-        raw = _get(self.host + "?" + query, self.timeout, self.name)
-        parsed = self._parse(raw)
-        if parsed:
-            return parsed
-
-        # 备选：老的 single 接口（返回嵌套数组）
-        query = urllib.parse.urlencode(
-            {"client": "gtx", "sl": src, "tl": dst, "dt": "t", "q": text}
-        )
-        raw = _get("https://translate.googleapis.com/translate_a/single?" + query, self.timeout, self.name)
-        parsed = self._parse(raw)
-        if not parsed:
-            raise MTError("Google 免密钥接口没有返回译文（可能被限流或页面改版）")
-        return parsed
+        for template, extra in self.PATHS:
+            query = urllib.parse.urlencode({"sl": src, "tl": dst, "q": text, **extra})
+            url = template.format(base=self.base) + "?" + query
+            parsed = self._parse(_get(url, self.timeout, self.name))
+            if parsed:
+                return parsed
+        raise MTError("Google 免密钥接口没有返回译文（可能被限流或页面改版）")
 
     @staticmethod
     def _parse(raw: str) -> str:

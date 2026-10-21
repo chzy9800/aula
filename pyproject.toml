@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aula"
-version = "0.4.0"
+version = "0.4.1"
 description = "课堂到笔记：实时转写、逐句翻译、讲义双语对照、结构化听课记录"
 readme = "README.md"
 requires-python = ">=3.10"

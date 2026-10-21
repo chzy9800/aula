@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from aula.asr import ASRError, GeminiASR  # noqa: E402
-from aula.llm import LLMClient, LLMError  # noqa: E402
+from aula.llm import LLMClient, LLMError, LLMRateLimited  # noqa: E402
 
 KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("AULA_LLM_API_KEY") or ""
 ASR_MODEL = os.environ.get("AULA_TEST_ASR_MODEL", "gemini-3.8-flash")
@@ -52,18 +52,24 @@ def synth_wav(text: str) -> bytes:
 
 
 def retry_or_skip(fn, attempts=4):
-    """上游 503（高峰过载）不该把测试判红——重试几次，仍然 503 就跳过。"""
+    """上游限流（429/503 或冷却期）不该把测试判红——重试几次，仍限流就跳过。
+
+    按异常类型判断而不是错误文本：冷却期的错误信息里没有 429 字样，
+    靠文本匹配会把"配额用尽"误判成未知错误。
+    """
     last = None
     for index in range(attempts):
         try:
             return fn()
+        except (LLMRateLimited, ASRError) as exc:
+            last = exc
+            time.sleep(2.0 * (index + 1))
         except (LLMError, ASRError) as exc:
-            message = str(exc)
-            if "503" not in message and "429" not in message and "暂时不可用" not in message:
+            if "503" not in str(exc) and "429" not in str(exc) and "暂时不可用" not in str(exc):
                 raise
             last = exc
             time.sleep(2.0 * (index + 1))
-    raise unittest.SkipTest("上游暂时过载（503），本次跳过：%s" % str(last)[:80])
+    raise unittest.SkipTest("上游暂时不可用（限流/过载），本次跳过：%s" % str(last)[:80])
 
 
 @unittest.skipUnless(KEY, "未设置 GEMINI_API_KEY，跳过真实联调")

@@ -219,6 +219,16 @@ aula providers    # 输出末尾会列出这三个
 | `mymemory` | `api.mymemory.translated.net/get?langpair=es\|zh-CN` | 翻译记忆库，有明确日额度 |
 | `libre` | `POST https://translate.disroot.org/translate` | 开源引擎的公共实例；可 `docker run libretranslate` 自建，无限量 |
 
+**`google_free` 的三条路径按实测排序**（2026-10-22，同机同 UA 逐个测过）：
+
+| 顺序 | 端点 | 实测 |
+| --- | --- | --- |
+| 1 | `clients5.google.com/translate_a/t?client=dict-chrome-ex` | ✅ 200，扁平数组 `["译文"]` |
+| 2 | `clients5.google.com/translate_a/single?client=dict-chrome-ex&dt=t` | ✅ 200，嵌套数组（第一条被拦时走它） |
+| 3 | `translate.googleapis.com/translate_a/single?client=gtx` | ❌ 429 "Sorry..." 拦截页（垫底，换网络也许能通） |
+
+> `translate.google.com/?sl=auto&tl=es&op=translate` 这种**网页地址不能当接口用**：实测返回 302 且 body 为空，那是给人看的 JS 应用；它背后的 XHR 才是上面第 1 条。同理 `translate.google.com/m` 也是 302（要 cookie/同意页）。
+
 **必须知道的风险**（不是免责声明，是会真实咬人的）：
 
 1. **它们是未公开接口**，参数或地址随时可能改。`translate.googleapis.com/translate_a/single`（老接口，网上教程几乎都抄这个）在本次实测里**已被拦**，返回 "Sorry..." 页面；只有 `clients5` 这个域名通。

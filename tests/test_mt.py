@@ -273,3 +273,64 @@ class LibreTest(unittest.TestCase):
         with mock.patch("aula.mt.opener_for", return_value=opener):
             with self.assertRaises(mt.MTError):
                 mt.LibreTranslateMT().translate("Hola", "es", "zh")
+
+
+class GoogleFreePathOrderTest(unittest.TestCase):
+    """端点顺序必须按实测可用性排：clients5 两条路径在前，废弃主机垫底。"""
+
+    def test_order_and_fallback(self):
+        urls = []
+
+        class Opener:
+            def open(self, request, timeout=0):
+                urls.append(request.full_url)
+                # 第一条路径返回拦截页，第二条返回嵌套数组（真实现场见过的形状）
+                if len(urls) == 1:
+                    payload = "<html>Sorry...</html>"
+                else:
+                    payload = json.dumps(
+                        [[["截止日期是五周。", "El plazo es de cinco semanas.", None, None, 3]], None, "es"]
+                    )
+                return _FakeResponse(payload)
+
+        with mock.patch("escucha.mt.opener_for", return_value=Opener()) if False else mock.patch(
+            "aula.mt.opener_for", return_value=Opener()
+        ):
+            text = mt.GoogleFreeMT().translate("El plazo es de cinco semanas.", "es", "zh")
+
+        self.assertEqual(text, "截止日期是五周。")
+        self.assertEqual(len(urls), 2, "第一条被拦后才应走第二条")
+        self.assertIn("clients5.google.com/translate_a/t?", urls[0])
+        self.assertIn("client=dict-chrome-ex", urls[0])
+        self.assertIn("clients5.google.com/translate_a/single?", urls[1])
+
+    def test_all_paths_blocked_raises(self):
+        class Opener:
+            def open(self, request, timeout=0):
+                return _FakeResponse("<html>Sorry...</html>")
+
+        with mock.patch("aula.mt.opener_for", return_value=Opener()):
+            with self.assertRaises(mt.MTError):
+                mt.GoogleFreeMT().translate("Hola.", "es", "zh")
+
+    def test_real_endpoint_live(self):
+        """真连一次 Google：确认首选路径当前真的通（无网络时跳过）。"""
+        try:
+            text = mt.GoogleFreeMT(timeout=12).translate("El plazo es de cinco semanas.", "es", "zh")
+        except mt.MTError as exc:
+            self.skipTest("网络不可用或被限流：%s" % str(exc)[:80])
+        self.assertIn("五周", text)
+
+
+class _FakeResponse:
+    def __init__(self, payload: str) -> None:
+        self._payload = payload.encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False

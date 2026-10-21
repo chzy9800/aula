@@ -21,6 +21,14 @@ class LLMError(RuntimeError):
     pass
 
 
+class LLMRateLimited(LLMError):
+    """429 限速 / 503 过载，或处于限流冷却期。
+
+    单独一个类型，调用方才能区分"接口挂了"和"接口被限流"——后者值得降级，
+    前者可能是配置错误。测试也靠它判断该跳过还是该报错。
+    """
+
+
 @dataclass
 class LLMClient:
     base_url: str
@@ -30,9 +38,20 @@ class LLMClient:
     retries: int = 2
     temperature: float = 0.2
 
+    # 429/503 冷却：实测 Gemini 免费层配额用尽时，每一句都去撞一次 429 只会
+    # 让课堂上的每一句话都多等一个来回。进入冷却后直接快速失败，让上层走降级。
+    cooldown_seconds: float = 60.0
+    _cool_until: float = 0.0
+
     @property
     def endpoint(self) -> str:
         return self.base_url.rstrip("/") + "/chat/completions"
+
+    def _in_cooldown(self) -> bool:
+        return time.monotonic() < self._cool_until
+
+    def _enter_cooldown(self) -> None:
+        self._cool_until = time.monotonic() + self.cooldown_seconds
 
     def chat(
         self,
@@ -57,6 +76,11 @@ class LLMClient:
 
         last_error: Optional[Exception] = None
         for attempt in range(self.retries + 1):
+            if self._in_cooldown():
+                # 冷却期内不再发起请求：让上层立刻走降级，而不是每句都等一个 429
+                raise LLMRateLimited(
+                    "接口处于限流冷却期（%.0f 秒内不再重试），已切换到备用链路" % self.cooldown_seconds
+                )
             request = urllib.request.Request(self.endpoint, data=body, headers=headers, method="POST")
             try:
                 with opener_for(self.endpoint).open(
@@ -70,9 +94,11 @@ class LLMClient:
                     raise LLMError("模型接口返回 %d：%s" % (exc.code, detail)) from exc
                 # 429 限速与 503 过载都是暂时的：值得等一会儿重试
                 if exc.code in (429, 503):
-                    last_error = LLMError(
+                    last_error = LLMRateLimited(
                         "接口暂时不可用（%d，通常是限速或高峰过载）：%s" % (exc.code, detail)
                     )
+                    if attempt == self.retries:
+                        self._enter_cooldown()
                 else:
                     last_error = LLMError("HTTP %d：%s" % (exc.code, detail))
             except urllib.error.URLError as exc:
