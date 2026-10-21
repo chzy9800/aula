@@ -76,6 +76,8 @@ def pick_reply(system: str, user: str) -> str:
         return json.dumps(SYNTH, ensure_ascii=False)
     if "课堂记录整理助手" in system:
         return json.dumps(SUMMARY, ensure_ascii=False)
+    if "讲义分析员" in system:
+        return json.dumps(_fake_outline(user), ensure_ascii=False)
     if "同声传译" in system:
         return _fake_sentence(user)
     if "讲义翻译" in system:
@@ -83,6 +85,39 @@ def pick_reply(system: str, user: str) -> str:
         items = [re.sub(r"^\s*\d+\.\s*", "", line).strip() for line in user.split("\n") if line.strip()]
         return "\n".join("%d. %s" % (index, _fake_sentence(text)) for index, text in enumerate(items, 1))
     return ANSWER
+
+
+def _fake_outline(user: str) -> dict:
+    """从带 [[PAGE_n]] 标记的文本里挑几行像标题的，当作大纲。
+
+    search_anchor 必须是原文逐字——不然前端定位不到，测试也就失去意义。
+    """
+    topics = []
+    page = 1
+    seen = set()
+    for line in user.split("\n"):
+        mark = re.match(r"\s*\[\[PAGE_(\d+)\]\]", line)
+        if mark:
+            page = int(mark.group(1))
+            continue
+        text = line.strip()
+        if not (10 <= len(text) <= 90) or not re.search(r"[A-Za-z]", text[:40]):
+            continue
+        anchor = text[:48].strip()
+        key = anchor.lower()
+        if key in seen or len(topics) >= 4:
+            continue
+        seen.add(key)
+        topics.append(
+            {
+                "display_title": "大纲主题 %d" % (len(topics) + 1),
+                "search_anchor": anchor,
+                "page_index": page,
+                "difficulty_score": 25 + 15 * len(topics),
+                "subtopics": [],
+            }
+        )
+    return {"topics": topics}
 
 
 SENTENCE_MAP = [

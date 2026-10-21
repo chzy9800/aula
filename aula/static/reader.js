@@ -28,6 +28,7 @@ const state = {
   notes: "",
   engine: "",
   selection: null,    // 当前圈选 { pageNum, rect, text, image }
+  outline: null,      // 大纲树 [{display_title, search_anchor, page_index, difficulty_score, subtopics}]
   inkStroke: null,
   pinPop: null,
 };
@@ -107,6 +108,9 @@ async function openBuffer(buffer, name, size) {
   state.ink = store("ink") || {};
   state.notes = store("note") || "";
   $("noteInput").value = state.notes;
+  state.outline = store("outline");
+  renderOutline();
+  $("outlineState").textContent = state.outline ? "已加载" : "未生成";
   $("empty").classList.add("hidden");
   $("pages").innerHTML = "";
   $("pageLabel").textContent = `1 / ${state.pageCount}`;
@@ -378,6 +382,111 @@ function updatePageLabel() {
   if (!state.pageCount) return;
   const current = Math.min(...(state.visiblePages.size ? state.visiblePages : [1]));
   $("pageLabel").textContent = `${current} / ${state.pageCount}`;
+}
+
+/* ---------- 大纲 ---------- */
+
+async function generateOutline() {
+  if (!state.pages.length) {
+    toast("先打开一份 PDF", "error");
+    return;
+  }
+  const button = $("outlineBtn");
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "生成中…";
+  $("outlineState").textContent = "抽取中…";
+  const pages = state.pages.map((record) => ({ index: record.pageNum, text: record.text || "" }));
+  try {
+    const result = await api("/api/reader/outline", {
+      method: "POST",
+      body: JSON.stringify({ pages, target_lang: state.targetLang }),
+    });
+    state.outline = result.topics;
+    store("outline", state.outline);
+    renderOutline();
+    $("outlineState").textContent = `${result.topics.length} 个主题 · ${result.model}${result.cached ? " · 缓存" : ""}`;
+  } catch (error) {
+    $("outlineState").textContent = "失败";
+    toast("大纲生成失败：" + error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function renderOutline() {
+  const tree = $("outlineTree");
+  if (!state.outline || !state.outline.length) {
+    tree.innerHTML = '<p class="dim small">没有生成出主题。如果这是扫描件（没有文字层），大纲做不了。</p>';
+    return;
+  }
+  tree.innerHTML = renderTopicList(state.outline, 0);
+  for (const node of tree.querySelectorAll("[data-anchor]")) {
+    node.addEventListener("click", () => jumpToAnchor(node.dataset.anchor, node));
+  }
+}
+
+function renderTopicList(topics, depth) {
+  return topics
+    .map((topic) => {
+      const children = renderTopicList(topic.subtopics || [], depth + 1);
+      const difficulty = Number(topic.difficulty_score) || 0;
+      const level = difficulty >= 70 ? "hard" : difficulty >= 40 ? "mid" : "easy";
+      return `<div class="outline-item depth-${depth}">
+        <button class="outline-link" data-anchor="${escapeHtml(topic.search_anchor)}" title="${escapeHtml(topic.search_anchor)}">
+          <span class="outline-title">${escapeHtml(topic.display_title)}</span>
+          <span class="outline-meta"><b class="diff ${level}">${difficulty}</b> · P${topic.page_index || "?"}</span>
+        </button>
+        ${children ? `<div class="outline-children">${children}</div>` : ""}
+      </div>`;
+    })
+    .join("");
+}
+
+function normalizeForSearch(text) {
+  return String(text || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function locateAnchor(anchor) {
+  // 逐级放宽：全文 → 前 60 字 → 前 30 字。模型偶尔会在锚点尾部带标点差异。
+  const needle = normalizeForSearch(anchor);
+  if (!needle) return null;
+  for (const probe of [needle, needle.slice(0, 60), needle.slice(0, 30)]) {
+    if (probe.length < 8) continue;
+    for (const record of state.pages) {
+      const index = record.blocks.findIndex((block) => normalizeForSearch(block.text).includes(probe));
+      if (index >= 0) return { record, index };
+    }
+  }
+  return null;
+}
+
+function jumpToAnchor(anchor, node) {
+  const hit = locateAnchor(anchor);
+  if (!hit) {
+    toast("原文里没找到这一段（锚点可能被换行截断）", "error");
+    return;
+  }
+  const reader = $("reader");
+  const readerRect = reader.getBoundingClientRect();
+  const sectionRect = hit.record.el.getBoundingClientRect();
+  // block.y 是按 BASE_SCALE 记的坐标；实际渲染是 BASE_SCALE * zoom
+  const offset = hit.record.blocks[hit.index].y * state.zoom;
+  reader.scrollTo({
+    top: reader.scrollTop + sectionRect.top - readerRect.top + offset - 28,
+    behavior: "smooth",
+  });
+  const blockEl = hit.record.transEl.querySelector(`[data-block="${hit.index}"]`);
+  for (const el of [hit.record.paper, blockEl]) {
+    if (!el) continue;
+    el.classList.remove("anchor-flash");
+    void el.offsetWidth;  // 重启动画
+    el.classList.add("anchor-flash");
+    setTimeout(() => el.classList.remove("anchor-flash"), 2200);
+  }
+  for (const item of document.querySelectorAll(".outline-link.active")) item.classList.remove("active");
+  if (node) node.classList.add("active");
 }
 
 /* ---------- 模式切换 ---------- */
@@ -726,6 +835,7 @@ function exportMarkdown() {
 /* ---------- 事件绑定 ---------- */
 
 function bind() {
+  $("outlineBtn").onclick = generateOutline;
   $("fileInput").onchange = (event) => {
     const file = event.target.files?.[0];
     if (file) openFile(file).catch((error) => toast("打开失败：" + error.message, "error"));
@@ -810,10 +920,9 @@ async function boot() {
   setMode("read");
   try {
     const health = await api("/api/health");
-    $("engineBadge").textContent = health.translate_engine === "llm" ? `模型 ${health.llm.model}` : "免密钥翻译";
-    if (!health.llm.configured) {
-      $("engineBadge").title = "圈选提问需要配置模型；翻译用免密钥接口即可";
-    }
+    $("engineBadge").textContent =
+      health.reader.engine === "llm" ? `模型 ${health.reader.llm_model}` : "免密钥翻译";
+    $("engineBadge").title = "圈选提问总是用模型；翻译引擎可在启动参数或设置里切换";
   } catch (error) {
     $("engineBadge").textContent = "后端未连接";
   }

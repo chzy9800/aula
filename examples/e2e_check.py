@@ -70,6 +70,25 @@ async def live_part() -> str:
 
 
 def reader_part() -> None:
+    outline = call(
+        "/api/reader/outline",
+        {
+            "pages": [
+                {"index": 1, "text": "UF2 Organizacion de la ejecucion\n\nEl plan general de construccion recoge toda la documentacion tecnica."},
+                {"index": 2, "text": "El plazo y el cronograma\n\nLa prevencion de riesgos laborales es fundamental."},
+            ],
+            "target_lang": "zh",
+        },
+        "POST",
+    )
+    topics = outline["topics"]
+    assert topics, outline
+    for topic in topics:
+        for field in ("display_title", "search_anchor", "page_index", "difficulty_score"):
+            assert field in topic, topic
+    assert all(t["page_index"] in (1, 2) for t in topics), topics
+    print("讲义大纲: %d 个主题，锚点与页码齐全（%s）" % (len(topics), "缓存" if outline.get("cached") else "新算"))
+
     body = call(
         "/api/reader/translate",
         {"blocks": ["El plazo es de cinco semanas.", "Falta material."], "source": "es", "target": "zh", "engine": "llm"},
