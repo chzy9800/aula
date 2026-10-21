@@ -43,6 +43,22 @@ class ExtractJsonTest(unittest.TestCase):
     def test_invalid_returns_none(self):
         self.assertIsNone(extract_json("完全不是 JSON"))
 
+    def test_thinking_chain_before_answer(self):
+        # 推理模型偶发把推敲写进正文（ pseudo-JSON 不是合法 JSON，扫不过）
+        text = ('我先想一下输出格式：{"terms": [...]} 这样不对，改成正文明例。\n'
+                '最终答案：{"terms": [{"term": "cronograma", "zh": "进度表"}]}')
+        parsed = extract_json(text)
+        self.assertEqual(parsed["terms"][0]["term"], "cronograma")
+
+    def test_truncated_object_is_repaired(self):
+        parsed = extract_json('{"points": ["第一条", "第二条"], "terms": [{"term": "plaz')
+        self.assertEqual(parsed["points"], ["第一条", "第二条"])
+        self.assertEqual(parsed["terms"][0]["term"], "plaz")
+
+    def test_unrepairable_truncation_returns_none(self):
+        # 正好切断在键名中间：补不回来，认输（上层会重试）
+        self.assertIsNone(extract_json('{"points": ["甲", "乙"], "na'))
+
 
 class NormalizeTest(unittest.TestCase):
     def test_points_as_strings(self):

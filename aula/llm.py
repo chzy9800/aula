@@ -29,6 +29,12 @@ class LLMRateLimited(LLMError):
     """
 
 
+# chat_json 解析失败时的纠偏提示。只提格式要求，不重复原任务——
+# 原消息已在历史里，再抄一遍只会让输入变长。
+_JSON_NUDGE = ("上一条回复不是合法的 JSON。请只输出一个 JSON 对象："
+               "不要思考过程、不要 Markdown 围栏、不要任何其他文字。")
+
+
 @dataclass
 class LLMClient:
     base_url: str
@@ -37,6 +43,11 @@ class LLMClient:
     timeout: int = 120
     retries: int = 2
     temperature: float = 0.2
+
+    # 推理模型的思考档位（GLM-5 / DeepSeek-V4 这类 only_reasoning 模型实测：
+    # 默认 high 档下每句翻译要先烧几百思考 token，实时场景等不起）。留空则不
+    # 发送该参数——老接口（Gemini 等）不认识它会直接 400。
+    reasoning_effort: str = ""
 
     # 429/503 冷却：实测 Gemini 免费层配额用尽时，每一句都去撞一次 429 只会
     # 让课堂上的每一句话都多等一个来回。进入冷却后直接快速失败，让上层走降级。
@@ -69,6 +80,8 @@ class LLMClient:
         }
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -110,9 +123,22 @@ class LLMClient:
         raise last_error or LLMError("未知错误")
 
     def chat_json(self, messages: List[Dict[str, str]], **kwargs: Any) -> Dict[str, Any]:
-        parsed = extract_json(self.chat(messages, **kwargs))
+        raw = self.chat(messages, **kwargs)
+        parsed = extract_json(raw)
+        if parsed is not None:
+            return parsed
+        # 偶发失败（实测 GLM-5.3-Flash 走本地网关时约 1/20）：思考链混进正文，
+        # 或输出被截断。带一句纠偏重试一次，比让整块内容报废便宜得多。
+        nudge = list(messages) + [
+            {"role": "user", "content": _JSON_NUDGE},
+        ]
+        retry_raw = self.chat(nudge, **kwargs)
+        parsed = extract_json(retry_raw)
         if parsed is None:
-            raise LLMError("模型没有返回可解析的 JSON")
+            raise LLMError(
+                "模型没有返回可解析的 JSON（已重试）；首次返回开头：%s"
+                % raw[:120].replace("\n", " ")
+            )
         return parsed
 
 
@@ -132,7 +158,18 @@ def _content(raw: str) -> str:
 
 
 def extract_json(text: str) -> Optional[Dict[str, Any]]:
-    """从可能带围栏的回复里抠出 JSON 对象。"""
+    """从可能带围栏、思考链或截断的回复里抠出 JSON 对象。
+
+    三个真实坑（都是实测遇到的，不是假想）：
+    1. 围栏：```json ... ``` 包着；
+    2. 思考链混进正文：推理模型偶发不把思考分流到 reasoning_content，
+       于是 content 里先有一段带花括号的推敲、最后才是答案——**第一个
+       花括号属于推敲**，只试第一个必然失败；
+    3. 截断：输出到一半被上限切断，JSON 少一半闭合括号。
+
+    所以：围栏优先；然后按顺序尝试文本里**每一个** 完整 {...}；都失败时
+    对未闭合的尾部做一次括号修补。
+    """
     if not text:
         return None
     candidates = []
@@ -145,6 +182,8 @@ def extract_json(text: str) -> Optional[Dict[str, Any]]:
 
     for candidate in candidates:
         candidate = candidate.strip()
+        if not candidate:
+            continue
         try:
             loaded = json.loads(candidate)
             if isinstance(loaded, dict):
@@ -152,32 +191,102 @@ def extract_json(text: str) -> Optional[Dict[str, Any]]:
         except json.JSONDecodeError:
             pass
         start = candidate.find("{")
-        if start == -1:
-            continue
-        depth = 0
-        in_string = False
-        escape = False
-        for index in range(start, len(candidate)):
-            ch = candidate[index]
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
-                continue
-            if ch == '"':
-                in_string = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        loaded = json.loads(candidate[start : index + 1])
-                        if isinstance(loaded, dict):
-                            return loaded
-                    except json.JSONDecodeError:
-                        break
+        while start != -1:
+            found = _scan_object(candidate, start)
+            if found is not None:
+                return found
+            # 这个起点扫不出完整对象：未闭合（截断）就先修补，不行再找下一个 {
+            repaired = _repair_truncated(candidate[start:])
+            if repaired is not None:
+                return repaired
+            start = candidate.find("{", start + 1)
     return None
+
+
+def _scan_object(text: str, start: int) -> Optional[Dict[str, Any]]:
+    """从 start 处的 '{' 开始找第一个括号配平的片段并解析。"""
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        ch = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    loaded = json.loads(text[start : index + 1])
+                except json.JSONDecodeError:
+                    return None
+                return loaded if isinstance(loaded, dict) else None
+    return None
+
+
+def _repair_truncated(fragment: str) -> Optional[Dict[str, Any]]:
+    """给被截断的 JSON 补上未闭合的字符串与括号。
+
+    只做"补右括号"这一种修补——截断永远丢尾巴，不会多出内容。补完还解析不了
+    （比如正好切断在键名中间）就认输，交给上层重试。
+    """
+    if not fragment.lstrip().startswith("{"):
+        return None
+    stack: List[str] = []
+    in_string = False
+    escape = False
+    for ch in fragment:
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+    if not stack and not in_string:
+        return None          # 本来就配平，是别的问题，不是截断
+    patched = fragment
+    if in_string:
+        patched += '"'
+    patched += "".join(reversed(stack))
+    try:
+        loaded = json.loads(patched)
+    except json.JSONDecodeError:
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def client_for(settings, *, model: Optional[str] = None,
+               timeout: Optional[int] = None,
+               retries: Optional[int] = None) -> LLMClient:
+    """从一份 Settings 构造客户端。
+
+    为什么收一个 settings 而不是逐个传 base_url/api_key：调用点有十几处，
+    每加一个供应商相关参数（如 reasoning_effort）就要改一遍——漏一处的症状是
+    「同一个配置，大纲走 low 档、翻译走 high 档」，极难查。这里做单点。
+    """
+    return LLMClient(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=model or settings.resolved_summary_model(),
+        timeout=120 if timeout is None else timeout,
+        retries=1 if retries is None else retries,
+        reasoning_effort=getattr(settings, "llm_reasoning_effort", "") or "",
+    )

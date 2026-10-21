@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, config, digest, doc_render, mt as mtmod, providers, reader, store
 from .asr import ASRError, TimedASR, build_asr
-from .llm import LLMClient, LLMError
+from .llm import LLMClient, LLMError, client_for
 from .summarize import summarize
 from .transcript import BilingualTurn
 from .translate import Translator
@@ -49,11 +49,7 @@ class Engines:
 
     def rebuild(self, settings: config.Settings) -> None:
         self.settings = settings
-        self.client = LLMClient(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.llm_model,
-        )
+        self.client = client_for(settings, model=settings.llm_model)
         # 专用翻译接口（Google/Azure/DeepL）与 LLM 翻译二选一；构造失败不炸整机，
         # 退回 LLM 并让 /api/health 暴露原因。
         self.mt_error = ""

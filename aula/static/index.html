@@ -7,6 +7,13 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
+  <!-- 极光背景：纯装饰，不拦截指针 -->
+  <div class="aurora" aria-hidden="true">
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+    <div class="blob b3"></div>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <span class="logo">aula</span>
@@ -46,8 +53,11 @@
       </div>
       <div id="transcript" class="transcript"></div>
       <div id="emptyHint" class="empty">
+        <div class="glyph" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><path d="M8 6v4"/><path d="M16 6v4"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M9 21h6"/></svg>
+        </div>
         点右上角「开始听课」，老师说的每一句会带译文实时出现在这里。<br />
-        没有麦克风或想先试界面，可以直接在「设置」里把转写切到演示模式。
+        没有麦克风或想先试界面，可以在「设置」里把转写切到演示模式。
       </div>
       <div class="meter"><div id="levelBar" class="level-bar"></div></div>
     </section>
@@ -80,6 +90,7 @@
     <span id="statSegments">0 句</span>
     <span id="statLatency">延迟 —</span>
     <span id="statProvider">转写 —</span>
+    <span class="ws-dot" id="wsDot" title="实时连接状态">连接 —</span>
     <span class="spacer"></span>
     <button id="digestBtn" class="ghost small" title="把整节课压成结构化听课记录">生成听课记录</button>
     <button id="exportBtn" class="ghost small">导出 Markdown</button>
@@ -143,6 +154,15 @@
           <label>接口地址<input id="cfgLlmBaseUrl" placeholder="http://localhost:11434/v1" /></label>
           <label>模型<input id="cfgLlmModel" placeholder="qwen3:8b / deepseek-chat" /></label>
           <label>密钥<input id="cfgLlmApiKey" type="password" placeholder="本地 Ollama 填任意值即可" /></label>
+          <label>思考档
+            <select id="cfgLlmEffort">
+              <option value="">不发送（用接口默认档）</option>
+              <option value="low">low（快，适合实时翻译）</option>
+              <option value="high">high（想得更深，适合总结/大纲）</option>
+              <option value="max">max（最慢，最仔细）</option>
+            </select>
+          </label>
+          <p class="hint">思考档只对推理模型（如本地网关的 GLM-5 / DeepSeek-V4）有意义；实时翻译建议 low，否则每句要先烧几百个思考 token。</p>
         </fieldset>
 
         <fieldset>

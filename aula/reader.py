@@ -21,7 +21,8 @@ from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
 
 from . import chat as chatmod, config, mt as mtmod, outline as outlinemod, study as studymod
-from .llm import LLMClient, LLMError
+from . import llm as llmmod
+from .llm import LLMError
 
 STATIC_DIR = Path(__file__).parent / "static"
 SAMPLE_PDF = Path(__file__).parent / "examples" / "sample.pdf"
@@ -94,8 +95,7 @@ def create_router(settings: config.Settings) -> APIRouter:
             try:
                 if engine == "llm":
                     result = await asyncio.to_thread(
-                        _translate_llm, settings.llm_base_url, settings.llm_api_key,
-                        settings.resolved_translate_model(), blocks, source, target,
+                        _translate_llm, settings, blocks, source, target,
                     )
                 else:
                     result = await _translate_mt(engine, settings, blocks, source, target)
@@ -144,12 +144,10 @@ def create_router(settings: config.Settings) -> APIRouter:
         if key in _OUTLINE_CACHE:
             return dict(_OUTLINE_CACHE[key], cached=True)
 
-        client = LLMClient(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
+        client = llmmod.client_for(
+            settings,
             model=settings.resolved_summary_model(),
             timeout=120,
-            retries=1,
         )
         try:
             result = await asyncio.to_thread(outlinemod.build_outline, pages, client, target_lang)
@@ -188,13 +186,7 @@ def create_router(settings: config.Settings) -> APIRouter:
         if key in _OUTLINE_CACHE:
             return dict(_OUTLINE_CACHE[key], cached=True)
 
-        client = LLMClient(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.resolved_summary_model(),
-            timeout=90,
-            retries=1,
-        )
+        client = llmmod.client_for(settings, timeout=90)
         try:
             found = await asyncio.to_thread(studymod.extract_terms, pages, client, target_lang)
         except LLMError as exc:
@@ -214,13 +206,7 @@ def create_router(settings: config.Settings) -> APIRouter:
         page_text = str(payload.get("page_text") or "")
         question = str(payload.get("question") or "")
 
-        client = LLMClient(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.resolved_summary_model(),
-            timeout=60,
-            retries=1,
-        )
+        client = llmmod.client_for(settings, model=settings.llm_model, timeout=60)
         try:
             card = await asyncio.to_thread(
                 studymod.build_lecturer_card, selection, page_text, question, client
@@ -238,13 +224,7 @@ def create_router(settings: config.Settings) -> APIRouter:
         """
         history = payload.get("history") or []
         message = str(payload.get("message") or "")
-        client = LLMClient(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.resolved_summary_model(),
-            timeout=90,
-            retries=1,
-        )
+        client = llmmod.client_for(settings, timeout=90)
         try:
             answer = await asyncio.to_thread(
                 chatmod.chat,
@@ -262,13 +242,7 @@ def create_router(settings: config.Settings) -> APIRouter:
     async def mistakes(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         """错题总结：共性盲区、复习顺序、可执行的练习建议。"""
         records = payload.get("records") or []
-        client = LLMClient(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.resolved_summary_model(),
-            timeout=90,
-            retries=1,
-        )
+        client = llmmod.client_for(settings, timeout=90)
         try:
             summary = await asyncio.to_thread(chatmod.summarize_mistakes, records, client)
         except LLMError as exc:
@@ -297,13 +271,7 @@ def create_router(settings: config.Settings) -> APIRouter:
                 {"type": "image_url", "image_url": {"url": str(image)}},
             ]
 
-        client = LLMClient(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.llm_model,
-            timeout=90,
-            retries=1,
-        )
+        client = llmmod.client_for(settings, model=settings.llm_model, timeout=90)
         try:
             answer = await asyncio.to_thread(
                 client.chat,
@@ -333,9 +301,11 @@ def _engine_order(requested: str) -> List[str]:
 
 
 def _translate_llm(
-    base_url: str, api_key: str, model: str, blocks: List[str], source: str, target: str
+    settings: config.Settings, blocks: List[str], source: str, target: str
 ) -> List[str]:
-    client = LLMClient(base_url=base_url, api_key=api_key, model=model, timeout=120, retries=1)
+    client = llmmod.client_for(
+        settings, model=settings.resolved_translate_model(), timeout=120
+    )
     numbered = "\n".join("%d. %s" % (index + 1, block) for index, block in enumerate(blocks))
     reply = client.chat(
         [

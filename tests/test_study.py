@@ -140,16 +140,16 @@ class EndpointTest(unittest.TestCase):
 
     def test_terms_returns_and_caches(self):
         reply = '{"terms": [{"term": "cronograma", "translation": "进度表", "note": "", "page_index": 2}]}'
-        with mock.patch("aula.reader.LLMClient.chat_json", return_value=study.json.loads(reply)):
+        with mock.patch("aula.llm.LLMClient.chat_json", return_value=study.json.loads(reply)):
             first = self.client.post("/api/reader/terms", json={"pages": PAGES}).json()
         self.assertEqual(len(first["terms"]), 1)
         self.assertFalse(first["cached"])
-        with mock.patch("aula.reader.LLMClient.chat_json", side_effect=AssertionError("不该再调")):
+        with mock.patch("aula.llm.LLMClient.chat_json", side_effect=AssertionError("不该再调")):
             second = self.client.post("/api/reader/terms", json={"pages": PAGES}).json()
         self.assertTrue(second["cached"])
 
     def test_terms_all_fail_is_502(self):
-        with mock.patch("aula.reader.LLMClient.chat_json", side_effect=LLMError("down")):
+        with mock.patch("aula.llm.LLMClient.chat_json", side_effect=LLMError("down")):
             self.assertEqual(
                 self.client.post("/api/reader/terms", json={"pages": PAGES}).status_code, 502
             )
@@ -159,7 +159,7 @@ class EndpointTest(unittest.TestCase):
             '{"module": "UF2", "topic": "工期", "current_understanding": "我以为固定",'
             ' "attempt": "", "stuck_point": "看不懂", "lecturer_question": "按什么排序？"}'
         )
-        with mock.patch("aula.reader.LLMClient.chat_json", return_value=study.json.loads(reply)):
+        with mock.patch("aula.llm.LLMClient.chat_json", return_value=study.json.loads(reply)):
             body = self.client.post(
                 "/api/reader/lecturer-card",
                 json={"selection_text": "El plazo", "page_text": "…", "question": "不懂"},
@@ -167,7 +167,7 @@ class EndpointTest(unittest.TestCase):
         self.assertEqual(body["card"]["lecturer_question"], "按什么排序？")
 
     def test_lecturer_card_failure_is_502(self):
-        with mock.patch("aula.reader.LLMClient.chat_json", side_effect=LLMError("down")):
+        with mock.patch("aula.llm.LLMClient.chat_json", side_effect=LLMError("down")):
             response = self.client.post(
                 "/api/reader/lecturer-card",
                 json={"selection_text": "x", "page_text": "…", "question": "不懂"},

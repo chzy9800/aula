@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from . import __version__, config, digest, doc_render, mt as mtmod, providers
+from . import __version__, config, digest, doc_render, llm as llmmod, mt as mtmod, providers
 from .chunk import chunk_turns, stats
 from .llm import LLMClient, LLMError
 from .textclean import clean_turns
@@ -155,13 +155,7 @@ def settings_from(args: argparse.Namespace) -> config.Settings:
 
 
 def client_for(settings: config.Settings) -> LLMClient:
-    return LLMClient(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.resolved_summary_model(),
-        timeout=300,
-        retries=2,
-    )
+    return llmmod.client_for(settings, timeout=300, retries=2)
 
 
 # —— providers / doctor ——

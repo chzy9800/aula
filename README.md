@@ -80,9 +80,12 @@ aula --asr-provider whisper --asr-model small --open
 | 预设 | 代表模型 | 能力 | 免费层 |
 | --- | --- | --- | --- |
 | `ollama` | `qwen3:8b` | 对话 + 转写 | 无限、离线、无需密钥 |
+| `wbmanager` | `cn:glm-5.3-flash` | 对话 | 复用本机 WorkBuddy Manager 账号池，面板需在 7864 运行 |
 | `gemini` | `gemini-3.8-flash` | 对话 + 转写 | 约 10–15 RPM / 250–1500 RPD |
 | `groq` | `llama-3.3-70b` + `whisper-large-v3-turbo` | 对话 + 转写 | 约 30 RPM / 1000 RPD |
 | `openrouter` / `cerebras` / `mistral` / `zhipu` / `siliconflow` / `github` / `dashscope` / `openai` | 见 `aula providers` | 对话（部分含转写） | 各家不同 |
+
+> **推理模型要调思考档。** `wbmanager` 里的 GLM-5 / DeepSeek-V4 是 `only_reasoning` 模型，默认档会为每句翻译先烧几百个思考 token——实时场景直接等不起。预设默认发 `reasoning_effort: low`，需要更深的归纳时在设置里改成 `high`。
 
 翻译另有三条**完全免密钥**的引擎，装上就能用：
 
@@ -116,6 +119,10 @@ aula --translate-engine libre --open         # LibreTranslate 公共实例，可
 
 **追问是有状态的，服务端不是。** 同一段圈选的连续对话由浏览器按讲义指纹保存，服务端每次只拿到"这一段原文 + 最近 8 轮历史"——不建会话表、不存你的聊天。换模型、重启服务、甚至换个设备打开同一份讲义，对话都还在原地。追问的教学策略也写在提示词里：先判断学生意图（问概念 → 直接解释；想解题 → 只给思路；说不会 → 从最小一步讲起），每次最多提一个可选的问题，绝不逼学生先回答才给解释。
 
+**模型返回的 JSON 不假设它守规矩。** 三个真实坑都处理了：推理模型会把带花括号的推敲混进正文（所以按顺序尝试文本里**每一个**完整对象，而不是只试第一个）；输出可能被上限切断（所以对未闭合的片段做一次括号修补）；实在解析不出来时带一句纠偏重试，并在报错里附上首次返回的现场——而不是笼统一句"没有返回可解析的 JSON"。
+
+**玻璃拟态不是四个 CSS 属性。** 成熟实现要补三件事：`saturate(170%)`（只模糊会把背景洗成灰）、SVG `feTurbulence` 4% 噪点（消色带，让 frost 有物理质感）、`@supports` 回退（不支持 `backdrop-filter` 的引擎给不透明填充——玻璃是装饰，可读性不可让步）。动效只动 `transform`/`opacity`：`backdrop-filter` 每帧都要重算背景，动画它的半径是最贵的写法。同理，`prefers-reduced-transparency` 与 `prefers-reduced-motion` 都要真的响应。
+
 ## 架构
 
 ```
@@ -127,7 +134,7 @@ aula/
 ├ asr.py            mock / OpenAI 兼容 / faster-whisper / Gemini 原生音频
 ├ translate.py      逐句翻译（术语表 + 缓存 + MT 优先）
 ├ mt.py             7 条翻译引擎（3 条免密钥）
-├ providers.py      11 家服务商预设
+├ providers.py      12 家服务商预设（含本机 Manager 网关）
 ├ summarize.py      课上总结（六段结构）
 ├ digest.py         两级归纳：逐块抽取 → 全局合成
 ├ transcript.py     转写解析与双语单调对齐
@@ -142,7 +149,7 @@ aula/
 ## 测试
 
 ```bash
-python -m unittest discover -s tests -v   # 154 项：解析 / 对齐 / 分块 / 存储 / 引擎 / 接口 / WebSocket
+python -m unittest discover -s tests -v   # 213 项：解析 / 对齐 / 分块 / 存储 / 引擎 / 接口 / WebSocket / JSON 健壮性
 node tests/vad.test.mjs                   # 7 项：断句算法（把 worklet 源码抽出来喂合成音频）
 python examples/e2e_check.py 8781         # 端到端：建课 → 送音频 → 总结 → 听课记录 → 讲义翻译/提问 → 导出
 ```

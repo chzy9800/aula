@@ -113,7 +113,7 @@ class EndpointTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_chat_ok(self):
-        with mock.patch("aula.reader.LLMClient.chat", return_value="先解释，再追问。"):
+        with mock.patch("aula.llm.LLMClient.chat", return_value="先解释，再追问。"):
             body = self.client.post(
                 "/api/reader/chat",
                 json={"selection_text": SELECTION, "page_text": PAGE, "history": [], "message": "怎么排？"},
@@ -128,7 +128,7 @@ class EndpointTest(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
 
     def test_chat_llm_failure_is_502(self):
-        with mock.patch("aula.reader.LLMClient.chat", side_effect=LLMError("down")):
+        with mock.patch("aula.llm.LLMClient.chat", side_effect=LLMError("down")):
             response = self.client.post(
                 "/api/reader/chat",
                 json={"selection_text": SELECTION, "page_text": PAGE, "history": [], "message": "？"},
@@ -141,7 +141,7 @@ class EndpointTest(unittest.TestCase):
             "review_order": ["先分清概念"],
             "practice": [{"focus": "拆解计划", "how": "列成 6 项"}],
         }
-        with mock.patch("aula.reader.LLMClient.chat_json", return_value=reply):
+        with mock.patch("aula.llm.LLMClient.chat_json", return_value=reply):
             body = self.client.post(
                 "/api/reader/mistakes",
                 json={"records": [{"where": "P3", "question": "？", "answer": "…"}]},

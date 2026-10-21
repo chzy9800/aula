@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from aula import config, reader, server  # noqa: E402
+from aula import config, llm as llmmod, reader, server  # noqa: E402
 from aula.mt import MTError  # noqa: E402
 
 
@@ -72,7 +72,7 @@ class TranslateTest(ReaderTestBase):
 
     def test_mt_failure_falls_back_to_llm(self):
         with mock.patch.object(reader.mtmod, "build", return_value=FakeMT(fail=True)), \
-             mock.patch.object(reader.LLMClient, "chat", return_value="1. 第一段\n2. 第二段"):
+             mock.patch.object(llmmod.LLMClient, "chat", return_value="1. 第一段\n2. 第二段"):
             body = self.translate(["uno", "dos"]).json()
         self.assertEqual(body["engine"], "llm")
         self.assertTrue(body["degraded"])
@@ -80,13 +80,13 @@ class TranslateTest(ReaderTestBase):
 
     def test_all_engines_fail_returns_empty_not_error(self):
         with mock.patch.object(reader.mtmod, "build", return_value=FakeMT(fail=True)), \
-             mock.patch.object(reader.LLMClient, "chat", side_effect=reader.LLMError("down")):
+             mock.patch.object(llmmod.LLMClient, "chat", side_effect=reader.LLMError("down")):
             body = self.translate(["uno"]).json()
         self.assertEqual(body["translations"], [""])
         self.assertTrue(body["degraded"])
 
     def test_llm_numbering_stripped_and_padded(self):
-        with mock.patch.object(reader.LLMClient, "chat", return_value="1. 甲"):
+        with mock.patch.object(llmmod.LLMClient, "chat", return_value="1. 甲"):
             body = self.translate(["uno", "dos"], engine="llm").json()
         self.assertEqual(body["engine"], "llm")
         self.assertEqual(len(body["translations"]), 2)
@@ -104,7 +104,7 @@ class AskTest(ReaderTestBase):
             captured["messages"] = messages
             return "这里是解释。"
 
-        with mock.patch.object(reader.LLMClient, "chat", autospec=True, side_effect=fake_chat):
+        with mock.patch.object(llmmod.LLMClient, "chat", autospec=True, side_effect=fake_chat):
             body = self.client.post(
                 "/api/reader/ask",
                 json={"question": "为什么？", "selection_text": "圈中的句子", "page_text": "整页内容"},
@@ -117,7 +117,7 @@ class AskTest(ReaderTestBase):
         self.assertIn("为什么？", text)
 
     def test_model_failure_returns_503(self):
-        with mock.patch.object(reader.LLMClient, "chat", side_effect=reader.LLMError("连接失败")):
+        with mock.patch.object(llmmod.LLMClient, "chat", side_effect=reader.LLMError("连接失败")):
             response = self.client.post("/api/reader/ask", json={"question": "这是什么？"})
         self.assertEqual(response.status_code, 503)
         self.assertIn("模型", response.json()["detail"])

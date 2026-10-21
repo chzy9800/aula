@@ -122,23 +122,23 @@ class EndpointTest(unittest.TestCase):
             '{"topics": [{"display_title": "总体计划", "search_anchor": "El plan general",'
             ' "page_index": 1, "difficulty_score": 35, "subtopics": []}]}'
         )
-        with mock.patch("aula.reader.LLMClient.chat", return_value=reply):
+        with mock.patch("aula.llm.LLMClient.chat", return_value=reply):
             first = self._post({"pages": PAGES}).json()
         self.assertEqual(first["chunks"], 1)
         self.assertEqual(first["topics"][0]["display_title"], "总体计划")
         self.assertFalse(first["cached"])
-        with mock.patch("aula.reader.LLMClient.chat", side_effect=AssertionError("不应再调用")):
+        with mock.patch("aula.llm.LLMClient.chat", side_effect=AssertionError("不应再调用")):
             second = self._post({"pages": PAGES}).json()
         self.assertTrue(second["cached"])
 
     def test_llm_failure_is_502(self):
-        with mock.patch("aula.reader.LLMClient.chat", side_effect=LLMError("down")):
+        with mock.patch("aula.llm.LLMClient.chat", side_effect=LLMError("down")):
             response = self._post({"pages": PAGES})
         self.assertEqual(response.status_code, 502)
 
     def test_all_chunks_bad_json_is_502(self):
         # 全部块都解析失败时必须报错；返回"空大纲"会让用户以为讲义没内容
-        with mock.patch("aula.reader.LLMClient.chat", return_value="这不是 JSON"):
+        with mock.patch("aula.llm.LLMClient.chat", return_value="这不是 JSON"):
             response = self._post({"pages": PAGES})
         self.assertEqual(response.status_code, 502)
         self.assertIn("解析失败", response.json()["detail"])

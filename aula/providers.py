@@ -41,6 +41,10 @@ class Provider:
     asr_model: str = ""
     paid: bool = False            # 有免费额度为 False，纯付费为 True
     local: bool = False
+    # 推理模型思考档（low/high/max）；空 = 用接口默认。apply() 会同步到
+    # settings.llm_reasoning_effort——包括"该 provider 不需要时清空"，
+    # 免得从推理模型切回 Gemini 还带着一个它不认识的参数被 400。
+    reasoning_effort: str = ""
 
     @property
     def needs_key(self) -> str:
@@ -76,6 +80,21 @@ PROVIDERS: Tuple[Provider, ...] = (
         limits="无限制，吃本机内存/显存",
         free_note="完全免费、离线、不上传",
         docs="https://ollama.com",
+    ),
+    Provider(
+        id="wbmanager",
+        label="WorkBuddy Manager（本地网关）",
+        kind="chat",
+        base_url="http://127.0.0.1:7864/v1",
+        model="cn:glm-5.3-flash",
+        key_env="WB_MANAGER_API_KEY",
+        key_url="http://127.0.0.1:7864/keys",
+        alt_models=("cn:glm-5.3-flash", "cn:deepseek-v4.1-flash"),
+        context="约 100 万 token",
+        limits="花本机账号池的积分；模型均为推理模型，预设 low 思考档保实时性",
+        free_note="复用本机 Manager 账号池，密钥在 http://127.0.0.1:7864/keys 创建；面板需保持运行",
+        docs="http://127.0.0.1:7864/keys",
+        reasoning_effort="low",
     ),
     Provider(
         id="gemini",
@@ -290,6 +309,11 @@ def apply(settings, explicit: Optional[set] = None):
             data["asr_model"] = provider.asr_model
         if "asr_api_key" not in explicit and data.get("llm_api_key"):
             data["asr_api_key"] = data["llm_api_key"]
+
+    # 思考档跟随预设（含清空）：推理模型切回普通模型时，残留的
+    # reasoning_effort 会让不认这个参数的接口直接 400。
+    if "llm_reasoning_effort" not in explicit:
+        data["llm_reasoning_effort"] = provider.reasoning_effort
 
     return dataclasses.replace(settings, **data)
 

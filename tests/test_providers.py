@@ -88,6 +88,21 @@ class ApplyTest(unittest.TestCase):
         applied = providers.apply(config.Settings(provider="cerebras", asr_provider="mock"), set())
         self.assertEqual(applied.asr_provider, "mock", "只做对话的预设不该动转写配置")
 
+    def test_wbmanager_preset_points_at_local_gateway(self):
+        applied = providers.apply(config.Settings(provider="wbmanager"), set())
+        self.assertEqual(applied.llm_base_url, "http://127.0.0.1:7864/v1")
+        self.assertEqual(applied.llm_model, "cn:glm-5.3-flash")
+        self.assertEqual(applied.asr_provider, "auto", "网关只做对话，别动转写")
+
+    def test_reasoning_effort_follows_preset_and_clears(self):
+        applied = providers.apply(config.Settings(provider="wbmanager"), set())
+        self.assertEqual(applied.llm_reasoning_effort, "low")
+        # 切回不认这个参数的预设时必须清掉，否则请求直接 400
+        plain = providers.apply(
+            config.Settings(provider="gemini", llm_reasoning_effort="low"), set()
+        )
+        self.assertEqual(plain.llm_reasoning_effort, "")
+
     def test_public_config_exposes_providers(self):
         public = config.Settings(provider="gemini").public()
         self.assertEqual(len(public["providers"]), len(providers.PROVIDERS))

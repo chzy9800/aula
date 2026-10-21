@@ -342,13 +342,23 @@ function sendSegment({ pcm, startMs, endMs }) {
   state.ws.send(frame);
 }
 
+function setWs(state, text) {
+  const dot = $("wsDot");
+  if (!dot) return;
+  dot.className = "ws-dot " + state;
+  dot.textContent = text;
+}
+
 function connectWs() {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws/live?session_id=${state.sessionId}`);
   ws.binaryType = "arraybuffer";
 
-  ws.onopen = () => setBadge("ready", "已连接");
+  ws.onopen = () => {
+    setBadge("ready", "已连接");
+    setWs("on", "已连接");
+  };
   ws.onmessage = (event) => {
     let data;
     try {
@@ -389,6 +399,7 @@ function connectWs() {
     }
   };
   ws.onclose = () => {
+    setWs("off", "连接断开");
     if (state.recording) setTimeout(connectWs, 1200);
   };
   ws.onerror = () => {};
@@ -870,6 +881,7 @@ async function loadConfig() {
   $("cfgAsrApiKey").placeholder = cfg.asr_api_key ? `已配置（${cfg.asr_api_key}）` : "sk-...";
   $("cfgLlmBaseUrl").value = cfg.llm_base_url || "";
   $("cfgLlmModel").value = cfg.llm_model || "";
+  $("cfgLlmEffort").value = cfg.llm_reasoning_effort || "";
   $("cfgLlmApiKey").value = "";
   $("cfgLlmApiKey").placeholder = cfg.llm_api_key ? `已配置（${cfg.llm_api_key}）` : "";
   $("cfgSilenceMs").value = cfg.silence_ms;
@@ -877,7 +889,8 @@ async function loadConfig() {
   $("cfgMaxSegmentMs").value = cfg.max_segment_ms;
   $("cfgAutoSummary").value = cfg.auto_summary_minutes;
   $("cfgResolved").textContent =
-    `当前生效：转写 ${cfg.resolved.asr_provider} / ${cfg.resolved.asr_model} · 翻译 ${cfg.resolved.translate_model} · 总结 ${cfg.resolved.summary_model}`;
+    `当前生效：转写 ${cfg.resolved.asr_provider} / ${cfg.resolved.asr_model} · 翻译 ${cfg.resolved.translate_model} · 总结 ${cfg.resolved.summary_model}` +
+    (cfg.llm_reasoning_effort ? ` · 思考档 ${cfg.llm_reasoning_effort}` : "");
   $("statProvider").textContent = `转写 ${cfg.resolved.asr_provider}`;
 }
 
@@ -939,6 +952,7 @@ async function saveSettings() {
     asr_base_url: $("cfgAsrBaseUrl").value.trim(),
     llm_base_url: $("cfgLlmBaseUrl").value.trim(),
     llm_model: $("cfgLlmModel").value.trim(),
+    llm_reasoning_effort: $("cfgLlmEffort").value,
     silence_ms: Number($("cfgSilenceMs").value) || 700,
     min_speech_ms: Number($("cfgMinSpeechMs").value) || 350,
     max_segment_ms: Number($("cfgMaxSegmentMs").value) || 15000,

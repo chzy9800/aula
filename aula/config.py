@@ -109,6 +109,9 @@ class Settings:
     llm_model: str = "qwen3:8b"
     translate_model: str = ""     # 留空则用 llm_model
     summary_model: str = ""
+    # 推理模型思考档（low/high/max）；留空 = 不发送该参数，用接口默认档。
+    # 实时翻译建议 low：实测 GLM-5.3-Flash 默认档每句先烧几百思考 token。
+    llm_reasoning_effort: str = ""
 
     # —— 采集与断句 ——
     sample_rate: int = 16000
@@ -262,6 +265,7 @@ def load(overrides: Optional[Dict[str, Any]] = None) -> Settings:
             "mt_region": _env("MT_REGION", data.get("mt_region", "")),
             "translate_model": _env("TRANSLATE_MODEL", data.get("translate_model", "")),
             "summary_model": _env("SUMMARY_MODEL", data.get("summary_model", "")),
+            "llm_reasoning_effort": _env("LLM_REASONING_EFFORT", data.get("llm_reasoning_effort", "")),
             "sample_rate": _env_int("SAMPLE_RATE", data.get("sample_rate", 16000)),
             "silence_ms": _env_int("SILENCE_MS", data.get("silence_ms", 700)),
             "min_speech_ms": _env_int("MIN_SPEECH_MS", data.get("min_speech_ms", 350)),
