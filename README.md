@@ -73,6 +73,18 @@ aula --asr-provider whisper --asr-model small --open
 | `aula notes 转写.txt` | 不起服务，直接把转写生成听课记录 |
 | `aula batch 目录/` | 批量处理 `*_original.txt` + `*_translation.txt` |
 
+## 上网课怎么录音
+
+网课的声音从电脑里播出来，不是从麦克风进来。三种途径按优先级：
+
+| 场景 | 做法 | 代价 |
+| --- | --- | --- |
+| 网课在浏览器里（YouTube、网页版会议） | 音频来源选「标签页/系统声音」，分享时勾选「分享标签页音频」 | 零安装，Chrome/Edge 即可 |
+| 网课在桌面客户端（Zoom.app、Teams.app），Windows | 共享时选「整个屏幕」+ 勾选「同时分享系统声音」 | 零安装 |
+| 网课在桌面客户端，macOS | 装 [BlackHole](https://existential.audio)（2ch 免费虚拟声卡），系统输出建一个「多输出设备」（音箱 + BlackHole），aula 里把 BlackHole 当麦克风 | 一次配置 5 分钟，之后永久可用 |
+
+为什么 macOS 桌面客户端要走 BlackHole：浏览器的 `getDisplayMedia` 在 macOS 上**只给标签页音频**——抓系统级音频需要 ScreenCaptureKit（原生 API，浏览器页面拿不到权限）。AirTranslate 这类原生应用就是这么做的；aula 是网页应用，边界在此。系统声音的采集会**关掉回声消除/降噪/自动增益**——那三样是为麦克风语音设计的，会把课件音频搅坏。
+
 ## 内置服务商与免密钥翻译
 
 `--provider` 一条命令切换，接口地址与模型名自动填好；密钥从各家约定环境变量读。
