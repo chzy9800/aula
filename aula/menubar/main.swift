@@ -394,9 +394,9 @@ final class CaptionWindow {
         if panel.isVisible { render() }
     }
 
-    /// 译文回填：原文先到时先渲染了"只有原文"的一行，译文到齐后补上。
+    /// 精译回填：原文先到时先渲染了快速粗译（或空），LLM 精译到齐后覆盖。
     func updateLastTarget(_ target: String) {
-        guard !target.isEmpty, let last = lines.last, last.target.isEmpty else { return }
+        guard !target.isEmpty, let last = lines.last, last.target != target else { return }
         lines[lines.count - 1].target = target
         if panel.isVisible { render() }
     }

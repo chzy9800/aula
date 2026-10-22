@@ -183,7 +183,10 @@ class Translator:
                 ],
                 model=self.model,
                 temperature=0.1,
-                max_tokens=600,
+                # 中文译文 token 数 ≈ 西语字符数的 0.6～1 倍。上限跟着句长走
+                # 而不是拍死 600：短句给小上限，推理模型就没有铺开闲写的余地
+                # （实测短句省 0.3 秒左右）；长句照常给足，绝不截断。
+                max_tokens=min(800, 100 + len(text)),
                 timeout=timeout,
             )
         except LLMError:

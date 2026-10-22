@@ -510,6 +510,7 @@ function appendUtterance(item) {
   const node = document.createElement("div");
   node.className = "utt";
   node.dataset.seq = item.seq;
+  node.__item = item;   // 精译回填时要同步更新这个引用
 
   const row = document.createElement("div");
   row.className = "row";
@@ -567,12 +568,16 @@ function applyTranslation(seq, target) {
   if (!target) return;
   const node = $("transcript").querySelector(`.utt[data-seq="${seq}"]`);
   if (!node) return;
+  if (node.__item) node.__item.target = target;   // 之后"插入笔记"拿精译，不是粗译
   const text = node.querySelector(".text");
   if (!text) return;
   const dst = text.querySelector(".dst");
   if (dst) {
     dst.textContent = target;
     dst.classList.remove("pending");
+    // 精译覆盖粗译：闪一下告诉用户"这句刚升级过"，而不是凭空变字
+    dst.classList.add("refined");
+    setTimeout(() => dst.classList.remove("refined"), 900);
   } else {
     const fresh = document.createElement("div");
     fresh.className = "dst";

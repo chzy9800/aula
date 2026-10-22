@@ -88,6 +88,14 @@ class Engines:
             model=settings.resolved_translate_model(),
             mt=mt_client,
         )
+        # 快速粗译引擎（google_free，实测 0.2 秒/句）：原文一出立刻给个能懂的
+        # 中文，LLM 精译随后覆盖。构造失败不炸——只是没有快速档。
+        self.fast_mt = None
+        if settings.fast_translation and self.translator.enabled and mt_client is None:
+            try:
+                self.fast_mt = mtmod.build("google_free", mtmod.key_from_env("google_free"), "")
+            except mtmod.MTError as exc:
+                logger.info("快速粗译不可用，按原样等精译：%s", exc)
         self.asr = TimedASR(build_asr(settings))
 
     async def update(self, settings: config.Settings) -> None:
@@ -487,14 +495,21 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     queue.task_done()
                     continue
 
-                # 先落库并推送原文：用户约 1 秒就能看到"听到了什么"，
-                # 译文随后补上（带上下文判断残句的翻译要多花约 0.7 秒，
-                # 不该让整句话等他）。
+                # 两段接力：google_free 粗译先出（实测 0.2 秒/句），随原文一起
+                # 推送——用户"说完话 1 秒多"就能看懂大意；LLM 精译到了再覆盖。
+                fast_text = ""
+                if engines.fast_mt is not None:
+                    try:
+                        fast_text = await asyncio.to_thread(
+                            engines.fast_mt.translate, text, engines.settings.source_lang, engines.settings.target_lang
+                        )
+                    except Exception:  # noqa: BLE001 粗译失败不值一条日志，精译会兜底
+                        fast_text = ""
                 record = store.add_utterance(
                     db_path,
                     session_id,
                     source=text,
-                    target="",
+                    target=fast_text,
                     start_ms=start_ms,
                     end_ms=end_ms,
                     confidence=result.confidence,
@@ -514,10 +529,10 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     try:
                         translated = await asyncio.to_thread(engines.translator.translate, text)
                     except Exception as exc:  # noqa: BLE001
-                        # 翻译崩了不能连累原文：原文已经推出去了，这里只记一笔
+                        # 翻译崩了不能连累原文：粗译已经随原文推出去，这里只记一笔
                         translated = ""
-                        logger.warning("翻译失败（原文已送达）：%s", exc)
-                    if translated:
+                        logger.warning("精译失败（粗译已送达）：%s", exc)
+                    if translated and translated != fast_text:
                         store.set_translation(db_path, session_id, record["seq"], translated)
                         await _broadcast(session_id, {"type": "translation", "seq": record["seq"], "target": translated})
                 queue.task_done()

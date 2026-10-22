@@ -62,6 +62,7 @@ class ApiTest(unittest.TestCase):
             target_lang="zh",
             llm_model="fake",
             auto_summary_minutes=0,
+            fast_translation=False,   # 默认关：避免单测真连 google_free；接力行为有专项测试
         )
         self.app = create_app(self.settings)
         self.fake = FakeLLM()
@@ -210,6 +211,41 @@ class ApiTest(unittest.TestCase):
         with self.client.websocket_connect("/ws/live?session_id=nope") as ws:
             message = ws.receive_json()
             self.assertEqual(message["type"], "error")
+
+    def test_websocket_fast_translation_then_refinement(self):
+        """快速粗译接力：粗译随原文先到，LLM 精译随后覆盖。
+
+        实测 LLM 精译 2.5 秒/句而 google_free 粗译 0.2 秒/句——实时课堂里
+        先看到大意再等精译，比干等 2.5 秒强得多。
+        """
+        class FakeFastMT:
+            def translate(self, text, source, target):
+                return "粗译:" + text[:6]
+
+        sid = self.new_session()
+        self.app.state.engines.fast_mt = FakeFastMT()
+        pcm = b"\x00\x00" * 16000
+        header = struct.pack("<II", 0, 1000)
+
+        try:
+            with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
+                self.assertEqual(ws.receive_json()["type"], "ready")
+                ws.send_bytes(header + pcm)
+                first = ws.receive_json()
+                self.assertEqual(first["type"], "transcript")
+                self.assertEqual(
+                    first["utterance"]["target"],
+                    "粗译:" + first["utterance"]["source"][:6],
+                    "粗译必须随原文一起到",
+                )
+                second = ws.receive_json()
+                self.assertEqual(second["type"], "translation")
+                self.assertEqual(second["target"], "中文译文", "LLM 精译随后覆盖粗译")
+
+            detail = self.client.get(f"/api/sessions/{sid}").json()
+            self.assertEqual(detail["utterances"][0]["target"], "中文译文", "库里留精译")
+        finally:
+            self.app.state.engines.fast_mt = None
 
     def test_websocket_broadcasts_to_same_session(self):
         """本机助手送音频、浏览器看结果：同一节课的两个连接都要收到转写。

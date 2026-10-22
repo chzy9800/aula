@@ -99,6 +99,10 @@ class Settings:
     translate_engine: str = "llm"
     mt_api_key: str = ""
     mt_region: str = ""          # Azure 需要，其他留空
+    # 快速粗译接力：先用免密钥 google_free 出粗译（实测 0.2 秒/句），LLM 精译
+    # 到了再覆盖。实时课堂里"0.2 秒看懂大意"远比"干等 2.5 秒等精译"重要；
+    # 术语错误由精译兜底。关掉则回到"干等 LLM"。
+    fast_translation: bool = True
 
     # —— 讲义工作区 ——
     vision: bool = False        # 圈选提问时是否把裁图一起发给模型（需要视觉模型）
@@ -263,6 +267,7 @@ def load(overrides: Optional[Dict[str, Any]] = None) -> Settings:
             "translate_engine": _env("TRANSLATE_ENGINE", data.get("translate_engine", "llm")),
             "mt_api_key": _env("MT_API_KEY", data.get("mt_api_key", "")),
             "mt_region": _env("MT_REGION", data.get("mt_region", "")),
+            "fast_translation": _env_bool("FAST_TRANSLATION", data.get("fast_translation", True)),
             "translate_model": _env("TRANSLATE_MODEL", data.get("translate_model", "")),
             "summary_model": _env("SUMMARY_MODEL", data.get("summary_model", "")),
             "llm_reasoning_effort": _env("LLM_REASONING_EFFORT", data.get("llm_reasoning_effort", "")),

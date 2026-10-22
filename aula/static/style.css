@@ -403,6 +403,11 @@ input:focus, select:focus, textarea:focus {
 .utt .text { min-width: 0; flex: 1 1 auto; }
 .utt .src { color: var(--text); }
 .utt .dst { color: #9db9e8; margin-top: 3px; }
+.utt .dst.refined { animation: refinedFlash 0.9s var(--ease-out); }
+@keyframes refinedFlash {
+  0% { color: #e8f0ff; text-shadow: 0 0 14px rgba(120, 170, 255, 0.55); }
+  100% { color: #9db9e8; text-shadow: none; }
+}
 /* 译文未到：一条会呼吸的微光，比空白更明确地表达"正在翻" */
 .utt .dst.pending {
   min-height: 1.1em;
