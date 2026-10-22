@@ -22,9 +22,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shutil
 import struct
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -38,8 +42,18 @@ from .transcript import BilingualTurn
 from .translate import Translator
 
 STATIC_DIR = Path(__file__).parent / "static"
+HELPER_SOURCE = Path(__file__).parent / "helpers" / "main.swift"
 
 logger = logging.getLogger("aula.server")
+
+# —— 会话广播：同一节课的连接共享转写结果 ——
+#
+# 为什么要广播：本机助手（ScreenCaptureKit）也是一个 WS 客户端，它只负责
+# 送音频；转写结果必须同时到达浏览器，用户才能看见。广播之后顺带解锁了
+# 「多屏同看」——两个标签页开着同一节课，看到的内容完全一致。
+_HUBS: Dict[str, Set[WebSocket]] = {}
+# 本机助手子进程，按 session 记账
+_CAPTURES: Dict[str, subprocess.Popen] = {}
 
 
 class Engines:
@@ -318,6 +332,102 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
             headers={"Content-Disposition": "attachment; filename*=UTF-8''%s" % _quote(filename)},
         )
 
+
+
+    # —— 本机助手（ScreenCaptureKit 系统音频）——
+    #
+    # macOS 上浏览器抓不到系统级音频，需要原生 API。aula 自带一个单文件
+    # Swift 助手（aula/helpers/main.swift）：服务端拉起它，它抓系统播放的
+    # 声音、按浏览器同口径切句，再以同样的 WS 协议送回来——前端零改动。
+
+    def _helper_binary() -> Path:
+        """助手二进制，没有就当场编译（需要 Xcode Command Line Tools）。"""
+        binary = Path(engines.settings.data_dir).expanduser() / "bin" / "aula-system-audio"
+        if binary.is_file() and os.access(binary, os.X_OK):
+            return binary
+        if shutil.which("swiftc") is None:
+            raise HTTPException(
+                status_code=503,
+                detail="本机助手需要 swiftc 编译。装一下 Xcode Command Line Tools（xcode-select --install）"
+                       "再试；或者改用「标签页/系统声音」共享（浏览器内直接可用）。",
+            )
+        if not HELPER_SOURCE.is_file():
+            raise HTTPException(status_code=500, detail="助手源码缺失（helpers/main.swift）")
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_main = Path(tmp) / "main.swift"
+            shutil.copy(HELPER_SOURCE, tmp_main)  # 顶层 await 代码必须以 main.swift 名义编译
+            result = subprocess.run(
+                ["swiftc", "-O", "-swift-version", "5", "-o", str(binary), str(tmp_main)],
+                capture_output=True, text=True, timeout=300,
+            )
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail="助手编译失败：" + result.stderr[-400:])
+        logger.info("本机助手已编译：%s", binary)
+        return binary
+
+    @app.post("/api/capture/start")
+    async def capture_start(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        session_id = str(payload.get("session_id") or "")
+        db_path = engines.settings.db_path()
+        if store.get_session(db_path, session_id) is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        existing = _CAPTURES.get(session_id)
+        if existing is not None and existing.poll() is None:
+            return {"started": True, "already_running": True, "pid": existing.pid}
+
+        binary = _helper_binary()
+        url = "ws://127.0.0.1:%d/ws/live?session_id=%s" % (engines.settings.port, session_id)
+        log_dir = Path(engines.settings.data_dir).expanduser() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / ("capture-%s.log" % session_id)
+        handle = open(log_path, "ab")
+        try:
+            proc = subprocess.Popen(
+                [str(binary), "--url", url, "--verbose"],
+                stdout=handle, stderr=handle, start_new_session=True,
+            )
+        except OSError as exc:
+            handle.close()
+            raise HTTPException(status_code=500, detail="助手启动失败：" + str(exc)) from exc
+        _CAPTURES[session_id] = proc
+        logger.info("本机助手已启动（pid=%s，日志 %s）", proc.pid, log_path)
+        return {"started": True, "pid": proc.pid, "log": str(log_path)}
+
+    @app.post("/api/capture/stop")
+    async def capture_stop(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        session_id = str(payload.get("session_id") or "")
+        proc = _CAPTURES.pop(session_id, None)
+        if proc is None:
+            return {"stopped": False}
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        return {"stopped": True}
+
+    @app.get("/api/capture/status")
+    async def capture_status() -> Dict[str, Any]:
+        items = []
+        for sid, proc in list(_CAPTURES.items()):
+            entry: Dict[str, Any] = {"session_id": sid, "pid": proc.pid, "running": proc.poll() is None}
+            if not entry["running"]:
+                entry["exit_code"] = proc.returncode
+                log_path = Path(engines.settings.data_dir).expanduser() / "logs" / ("capture-%s.log" % sid)
+                if log_path.is_file():
+                    tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-6:]
+                    entry["log_tail"] = tail
+                _CAPTURES.pop(sid, None)   # 已退出：清账，下次能重新启动
+            items.append(entry)
+        binary = Path(engines.settings.data_dir).expanduser() / "bin" / "aula-system-audio"
+        return {
+            "helper_ready": binary.is_file() and os.access(binary, os.X_OK),
+            "swiftc": bool(shutil.which("swiftc")),
+            "captures": items,
+        }
+
     # —— 实时链路 ——
 
     @app.websocket("/ws/live")
@@ -331,6 +441,9 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
             return
 
         current = engines.settings
+        # 先进广播组、再发 ready：客户端拿到 ready 就可能立刻发音频/开始消费，
+        # 注册必须发生在那之前，否则开头的几句话会广播不到刚进来的连接。
+        _HUBS.setdefault(session_id, set()).add(websocket)
         await websocket.send_json(
             {
                 "type": "ready",
@@ -365,7 +478,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                         pcm, current.sample_rate, current.source_lang
                     )
                 except ASRError as exc:
-                    await websocket.send_json({"type": "error", "message": str(exc), "stage": "asr"})
+                    await _broadcast(session_id, {"type": "error", "message": str(exc), "stage": "asr"})
                     queue.task_done()
                     continue
 
@@ -387,13 +500,14 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     confidence=result.confidence,
                     latency_ms=asr_ms,
                 )
-                await websocket.send_json(
+                await _broadcast(
+                    session_id,
                     {
                         "type": "transcript",
                         "utterance": record,
                         "latency_ms": asr_ms,
                         "provider": result.provider,
-                    }
+                    },
                 )
 
                 if engines.translator.enabled:
@@ -405,9 +519,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                         logger.warning("翻译失败（原文已送达）：%s", exc)
                     if translated:
                         store.set_translation(db_path, session_id, record["seq"], translated)
-                        await websocket.send_json(
-                            {"type": "translation", "seq": record["seq"], "target": translated}
-                        )
+                        await _broadcast(session_id, {"type": "translation", "seq": record["seq"], "target": translated})
                 queue.task_done()
             stop.set()
 
@@ -433,7 +545,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                         store.get_note(db_path, session_id),
                     )
                 except LLMError as exc:
-                    await websocket.send_json({"type": "error", "message": str(exc), "stage": "summary"})
+                    await _broadcast(session_id, {"type": "error", "message": str(exc), "stage": "summary"})
                     continue
                 record = store.add_summary(
                     db_path,
@@ -443,7 +555,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     model=current.resolved_summary_model(),
                     covers_upto=count,
                 )
-                await websocket.send_json({"type": "summary", "summary": record})
+                await _broadcast(session_id, {"type": "summary", "summary": record})
 
         worker_task = asyncio.create_task(worker())
         summary_task = asyncio.create_task(auto_summary())
@@ -462,7 +574,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     if len(pcm) < current.sample_rate:  # <0.5 秒，丢弃
                         continue
                     if queue.full():
-                        await websocket.send_json({"type": "status", "message": "处理不过来，丢弃一段"})
+                        await _broadcast(session_id, {"type": "status", "message": "处理不过来，丢弃一段"})
                         continue
                     await queue.put((pcm, start_ms, end_ms))
                     continue
@@ -470,10 +582,10 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                 text_frame = message.get("text")
                 if text_frame:
                     if '"ping"' in text_frame:
-                        await websocket.send_json({"type": "pong"})
+                        await _broadcast(session_id, {"type": "pong"})
                     elif '"flush"' in text_frame:
                         await queue.join()
-                        await websocket.send_json({"type": "flushed"})
+                        await _broadcast(session_id, {"type": "flushed"})
         except WebSocketDisconnect:
             pass
         finally:
@@ -482,11 +594,28 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
             for task in (worker_task, summary_task):
                 task.cancel()
             await asyncio.gather(worker_task, summary_task, return_exceptions=True)
+            _HUBS.get(session_id, set()).discard(websocket)
+            if not _HUBS.get(session_id):
+                _HUBS.pop(session_id, None)
 
     return app
+
 
 
 def _quote(text: str) -> str:
     from urllib.parse import quote
 
     return quote(text)
+
+
+async def _broadcast(session_id: str, payload: Dict[str, Any]) -> None:
+    """把一条消息发给这节课的**所有**连接。
+
+    掉线的连接在这里摘除而不是触发整组失败——一个没关干净的旧标签页
+    不该把正在上课的那个页面带崩。
+    """
+    for socket in list(_HUBS.get(session_id, ())):
+        try:
+            await socket.send_json(payload)
+        except Exception:  # noqa: BLE001
+            _HUBS.get(session_id, set()).discard(socket)

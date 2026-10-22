@@ -1,5 +1,6 @@
 """接口与实时链路测试。用假 LLM，不打真实模型。"""
 
+import asyncio
 import json
 import os
 import struct
@@ -14,6 +15,13 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from aula import config  # noqa: E402
 from aula.server import create_app  # noqa: E402
+
+
+def asyncio_run_with_timeout(coro, timeout: float):
+    """asyncio.run 包一层超时：广播测试挂起时让测试失败而不是卡死 CI。"""
+    async def runner():
+        return await asyncio.wait_for(coro, timeout)
+    asyncio.run(runner())
 
 SUMMARY_PAYLOAD = {
     "overview": "本节课讲总体施工计划。",
@@ -202,6 +210,128 @@ class ApiTest(unittest.TestCase):
         with self.client.websocket_connect("/ws/live?session_id=nope") as ws:
             message = ws.receive_json()
             self.assertEqual(message["type"], "error")
+
+    def test_websocket_broadcasts_to_same_session(self):
+        """本机助手送音频、浏览器看结果：同一节课的两个连接都要收到转写。
+
+        广播是「系统声音·本机助手」功能的地基——助手只送音频不显示，
+        浏览器不送音频只显示，没有广播这个功能就是聋子配哑巴。
+
+        注意不能用 TestClient 测跨连接广播：它给每个 WebSocket 连接建
+        独立 portal（独立事件循环），跨循环 await send 必然死锁——那是
+        测试基建的假象，生产里 uvicorn 是单循环。所以这条用真服务测。
+        """
+        import threading
+        import time as time_mod
+        import urllib.request
+
+        import uvicorn
+        import websockets
+
+        class FakeLLM:
+            model = "fake"
+
+            def chat(self, messages, **kwargs):
+                return "中文译文"
+
+            def chat_json(self, messages, **kwargs):
+                return dict(SUMMARY_PAYLOAD)
+
+        app = create_app(config.Settings(
+            data_dir=self._tmp.name, asr_provider="mock", source_lang="es",
+            target_lang="zh", llm_model="fake", auto_summary_minutes=0,
+        ))
+        fake = FakeLLM()
+        app.state.engines.client = fake
+        app.state.engines.translator.client = fake
+
+        import socket as socket_mod
+
+        with socket_mod.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        for _ in range(50):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1)
+                break
+            except Exception:
+                time_mod.sleep(0.1)
+        else:
+            self.fail("测试服务没有起来")
+
+        try:
+            sid = self.client.post("/api/sessions", json={"title": "广播测试"}).json()["id"]
+            pcm = b"\x00\x00" * 16000
+            header = struct.pack("<II", 0, 1000)
+
+            async def scenario():
+                async with websockets.connect(f"ws://127.0.0.1:{port}/ws/live?session_id={sid}") as sender, \
+                        websockets.connect(f"ws://127.0.0.1:{port}/ws/live?session_id={sid}") as viewer:
+                    self.assertEqual(json.loads(await sender.recv())["type"], "ready")
+                    self.assertEqual(json.loads(await viewer.recv())["type"], "ready")
+                    await sender.send(header + pcm)
+                    first = json.loads(await viewer.recv())
+                    self.assertEqual(first["type"], "transcript", "浏览器必须看到助手的音频产出")
+                    self.assertEqual(first["utterance"]["seq"], 1)
+                    second = json.loads(await viewer.recv())
+                    self.assertEqual(second["type"], "translation")
+                    self.assertEqual(second["target"], "中文译文")
+                    seen_by_sender = json.loads(await sender.recv())
+                    self.assertEqual(seen_by_sender["type"], "transcript")
+
+            asyncio_run_with_timeout(scenario(), 30)
+        finally:
+            server.should_exit = True
+            thread.join(timeout=10)
+
+    def test_websocket_broadcast_cleans_up_on_disconnect(self):
+        """掉线的连接要摘出广播组：一个没关干净的旧标签页不能带崩课堂。"""
+        sid = self.new_session()
+        with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
+            ws.receive_json()   # ready
+            ws.close()          # 主动关：服务端收到 websocket.disconnect
+        import time as time_mod
+        from aula.server import _HUBS
+        deadline = time_mod.time() + 3
+        while time_mod.time() < deadline and sid in _HUBS:
+            time_mod.sleep(0.1)
+        self.assertNotIn(sid, _HUBS, "最后一个连接断开后应清空该节课的广播组")
+
+    # —— 本机助手（ScreenCaptureKit）——
+
+    def test_capture_start_unknown_session_is_404(self):
+        response = self.client.post("/api/capture/start", json={"session_id": "nope"})
+        self.assertEqual(response.status_code, 404)
+
+    def test_capture_start_without_helper_and_toolchain_is_503(self):
+        """既没有编好的助手又没有 swiftc：503 + 说清怎么办，而不是 500。"""
+        from unittest import mock
+
+        from aula import server
+
+        sid = self.new_session()
+        with mock.patch.object(server.shutil, "which", return_value=None), \
+                mock.patch.object(Path, "is_file", return_value=False), \
+                mock.patch.object(Path, "is_file", return_value=False):
+            response = self.client.post("/api/capture/start", json={"session_id": sid})
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("swiftc", response.json()["detail"])
+
+    def test_capture_status_shape(self):
+        response = self.client.get("/api/capture/status")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("helper_ready", body)
+        self.assertIn("swiftc", body)
+        self.assertEqual(body["captures"], [])
+
+    def test_capture_stop_without_start(self):
+        response = self.client.post("/api/capture/stop", json={"session_id": "whatever"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["stopped"], False)
 
     def test_websocket_ping(self):
         sid = self.new_session()

@@ -4,6 +4,31 @@
 
 ## [未发布]
 
+## [0.7.0] - 2026-10-22
+
+### 新增：系统声音·本机助手（macOS 网课的正解）
+
+逆向了 AirTranslate（见 `docs/reverse-engineering-airtranslate.md`，静态取证：ScreenCaptureKit 捕获 + Apple Speech 识别 + Translation 翻译），把同款方案搬进 aula：
+
+- **`aula/helpers/main.swift`**：单文件 Swift 助手（约 470 行，零第三方依赖）。ScreenCaptureKit 抓系统播放的音频 → 采样率/声道以实际 ASBD 为准（16k 单声道直通，不符则线性重采样兜底）→ 与浏览器 worklet **逐行同口径**的 VAD 切句（自适应噪声底 0.97/0.03、阈值 3x/2.5x、硬下限 0.010/0.008、尾部裁剪留 100ms）→ 按 aula 的 WS 二进制帧协议送回
+- **服务端拉起**：`/api/capture/start|stop|status`。助手二进制不存在时**当场编译**（需 Xcode Command Line Tools，`swiftc -O -swift-version 5`）；源码以 main.swift 名义编译（顶层 await 的要求）。日志落在 `~/.aula/logs/capture-<session>.log`，助手异常退出时 status 接口带日志尾部，前端 toast 说人话
+- **会话广播**：`/ws/live` 从"发给发送者"改为按 session 广播——助手送音频、浏览器看结果，两个标签页也能同看一节课。掉线连接在广播处摘除，不连累其他
+
+### 修复
+
+- 助手首版崩在 `dispatchMain()`：顶层 async 代码跑在主队列上，libdispatch 直接 trap（BUG IN CLIENT OF LIBDISPATCH）——换成信号量常驻。这是逆向文档之外的意外收获：崩一次才学到的平台规则
+
+### 真实验证（端到端）
+
+- 系统播放西语 TTS 音频 → ScreenCaptureKit 实测交付 **16000 Hz × 1 声道**（配置被尊重，无需重采样）→ VAD 切句 → 本地转写 → 网关翻译，3 句全部入库带译文
+- 广播实测：两个 WS 客户端同连一节课，浏览器侧完整收到 transcript + translation
+- 228 项测试通过（新增广播 ×2、捕获端点 ×4、术语回收与残句上下文沿用）
+
+### 已知边界
+
+- 助手由服务端拉起，**屏幕录制权限挂在宿主进程**（终端/启动器）上，首次要批一次
+- TestClient 给每个 WS 连接建独立 portal（独立事件循环），跨连接广播只能在真服务上测——测试基建的边界，已在测试注释里说明
+
 ## [0.6.0] - 2026-10-22
 
 ### 新增

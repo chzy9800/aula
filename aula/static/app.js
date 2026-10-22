@@ -15,6 +15,7 @@ const state = {
   sessions: [],
   ws: null,
   audio: null, // {ctx, stream, node, source}
+  helperMode: false, // true = 本机助手（ScreenCaptureKit）在服务端抓音频
   recording: false,
   seq: 0,
   segments: 0,
@@ -230,8 +231,8 @@ registerProcessor("vad", VADProcessor);
 /* ---------- 录音链路 ---------- */
 
 /** 拿音频流：麦克风（现场课堂）或标签页/系统声音（网课）。 */
-async function acquireStream() {
-  const source = $("audioSource") ? $("audioSource").value : "mic";
+async function acquireStream(sourceMode) {
+  const source = sourceMode || ($("audioSource") ? $("audioSource").value : "mic");
   if (source !== "system") {
     return navigator.mediaDevices.getUserMedia({
       audio: {
@@ -271,6 +272,28 @@ async function acquireStream() {
   return new MediaStream([audioTrack]);
 }
 
+/** 本机助手模式：服务端拉起 Swift 助手抓系统音频，浏览器只当显示器。 */
+async function startHelperCapture() {
+  const result = await api("/api/capture/start", {
+    method: "POST",
+    body: JSON.stringify({ session_id: state.sessionId }),
+  });
+  state.helperMode = true;
+  // 首次运行要过「屏幕录制」权限弹窗；拒绝或编译失败时助手会立刻退出，
+  // 延迟几秒查一次状态，把人话原因带回来。
+  setTimeout(async () => {
+    try {
+      const status = await api("/api/capture/status");
+      const mine = (status.captures || []).find((c) => c.session_id === state.sessionId);
+      if (mine && !mine.running && mine.exit_code !== 0) {
+        const reason = (mine.log_tail || []).join(" ").slice(0, 160);
+        toast("本机助手退出了：" + (reason || "未知原因"), "error");
+      }
+    } catch (_) { /* 状态查询失败不打扰上课 */ }
+  }, 3000);
+  return result;
+}
+
 async function startRecording() {
   if (state.recording) return;
   if (!state.sessionId) {
@@ -282,14 +305,19 @@ async function startRecording() {
     return;
   }
 
-  let stream;
-  try {
-    stream = await acquireStream();
-  } catch (err) {
-    toast(String(err.message || err), "error");
-    return;
+  const captureSource = $("audioSource") ? $("audioSource").value : "mic";
+  state.helperMode = captureSource === "helper";
+  let stream = null;
+  if (!state.helperMode) {
+    try {
+      stream = await acquireStream(captureSource);
+    } catch (err) {
+      toast(String(err.message || err), "error");
+      return;
+    }
   }
 
+  if (!state.helperMode) {
   const ctx = new AudioContext({ sampleRate: TARGET_RATE });
   await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET_SRC], { type: "application/javascript" })));
 
@@ -324,6 +352,8 @@ async function startRecording() {
   node.connect(sink);
   sink.connect(ctx.destination);
   state.audio = { ctx, stream, node, source, sink };
+  }
+
   state.recording = true;
   state.startedAt = Date.now();
   $("recordBtn").textContent = "结束听课";
@@ -331,6 +361,17 @@ async function startRecording() {
   setBadge("live", "听课中");
   $("emptyHint").classList.add("hidden");
   connectWs();
+  if (state.helperMode) {
+    // 本机助手：WS 通了之后再让服务端拉起捕获进程
+    try {
+      await startHelperCapture();
+      toast("本机助手已启动，正在抓电脑里播放的声音", "ready");
+    } catch (err) {
+      toast("助手启动失败：" + (err.message || err), "error");
+      await stopRecording();
+      return;
+    }
+  }
   updateStatus();
 }
 
@@ -350,6 +391,13 @@ async function stopRecording() {
       state.ws = null;
     }
   }, 600);
+
+  if (state.helperMode) {
+    // 助手是服务端的子进程，结束时通知服务端收掉
+    state.helperMode = false;
+    api("/api/capture/stop", { method: "POST", body: JSON.stringify({ session_id: state.sessionId }) })
+      .catch(() => {});
+  }
 
   if (state.audio) {
     try {
