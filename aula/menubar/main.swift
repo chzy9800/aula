@@ -74,8 +74,12 @@ final class VadSegmenter {
     var lastVoice = 0
     var clock = 0
     var onSegment: ((Data) -> Void)?
+    var onPartial: ((Data) -> Void)?
+    let partialMs: Double = 900
+    let partialWindowSamples = 8000 * 16
     private var pending: [Int16] = []
     private var windowCount = 0
+    private var sincePartial = 0
 
     init(silenceMs: Double = 700, minSpeechMs: Double = 350, maxSegmentMs: Double = 15000) {
         self.silenceMs = silenceMs
@@ -131,9 +135,34 @@ final class VadSegmenter {
             if Double(silenceSamples) / targetRate * 1000 >= silenceMs
                 || Double(segSamples) / targetRate * 1000 >= maxSegmentMs {
                 flush()
+            } else {
+                sincePartial += windowSamples
+                if sincePartial >= Int(partialMs / 1000 * targetRate) {
+                    sincePartial = 0
+                    emitPartial()
+                }
             }
         }
         windowCount += 1
+    }
+
+    /// 流式草稿：flags=1，只带最近 8 秒。字幕窗"边说边出字"靠它。
+    private func emitPartial() {
+        guard speaking, segSamples >= Int(minSpeechMs / 1000 * targetRate) else { return }
+        let total = segSamples
+        let keep = min(total, partialWindowSamples)
+        let skip = total - keep
+        let payload = chunk.suffix(keep)
+        var data = Data(capacity: 12 + keep * 2)
+        let startMs = UInt32((Double(startSample + skip) / targetRate) * 1000)
+        let endMs = UInt32((Double(startSample + total) / targetRate) * 1000)
+        withUnsafeBytes(of: startMs.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: endMs.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: UInt32(1).littleEndian) { data.append(contentsOf: $0) }
+        payload.withUnsafeBufferPointer { buffer in
+            data.append(contentsOf: UnsafeRawBufferPointer(buffer))
+        }
+        onPartial?(data)
     }
 
     private func flush() {
@@ -146,11 +175,12 @@ final class VadSegmenter {
         keep = min(keep, total)
         if total >= minSamples {
             let payload = chunk.prefix(keep)
-            var data = Data(capacity: 8 + keep * 2)
+            var data = Data(capacity: 12 + keep * 2)
             let startMs = UInt32((Double(startSample) / targetRate) * 1000)
             let endMs = UInt32((Double(startSample + keep) / targetRate) * 1000)
             withUnsafeBytes(of: startMs.littleEndian) { data.append(contentsOf: $0) }
             withUnsafeBytes(of: endMs.littleEndian) { data.append(contentsOf: $0) }
+            withUnsafeBytes(of: UInt32(0).littleEndian) { data.append(contentsOf: $0) }
             payload.withUnsafeBufferPointer { buffer in
                 data.append(contentsOf: UnsafeRawBufferPointer(buffer))
             }
@@ -160,6 +190,7 @@ final class VadSegmenter {
         chunk = []
         segSamples = 0
         silenceSamples = 0
+        sincePartial = 0
         lastVoice = 0
     }
 }
@@ -170,18 +201,23 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private var segmenter: VadSegmenter?
     var onSegment: ((Data) -> Void)?
+    var onPartial: ((Data) -> Void)?
     var onError: ((String) -> Void)?
     private let audioQueue = DispatchQueue(label: "aula.menubar.capture")
     private var srcRate: Double = 0
     private var srcChannels = 1
     private var srcInterleaved = true
 
-    func start(onSegment: @escaping (Data) -> Void, onError: @escaping (String) -> Void) async throws {
+    func start(onSegment: @escaping (Data) -> Void, onPartial: @escaping (Data) -> Void, onError: @escaping (String) -> Void) async throws {
         self.onSegment = onSegment
+        self.onPartial = onPartial
         self.onError = onError
         segmenter = VadSegmenter()
         segmenter?.onSegment = { [weak self] data in
             self?.onSegment?(data)
+        }
+        segmenter?.onPartial = { [weak self] data in
+            self?.onPartial?(data)
         }
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -387,10 +423,32 @@ final class CaptionWindow {
 
     var visible: Bool { panel.isVisible }
 
+    private var draftActive = false
+
+    /// 流式草稿：说话过程中每秒刷新一次，末行原地覆盖，不上新行。
+    func updateDraft(source: String, target: String) {
+        if draftActive, !lines.isEmpty {
+            lines[lines.count - 1] = (source, target)
+        } else {
+            lines.append((source, target))
+            if lines.count > 3 { lines.removeFirst(lines.count - 3) }
+            draftActive = true
+        }
+        if panel.isVisible { render() }
+    }
+
+    /// 定稿：草稿行原位转正；没有草稿才上新行。
     func update(source: String, target: String) {
-        if let last = lines.last, last.source == source { return }   // 同一句的回填
-        lines.append((source, target))
-        if lines.count > 3 { lines.removeFirst(lines.count - 3) }
+        let wasDraft = draftActive
+        draftActive = false
+        if let last = lines.last, last.source == source {
+            lines[lines.count - 1].target = target
+        } else if wasDraft, !lines.isEmpty {
+            lines[lines.count - 1] = (source, target)
+        } else {
+            lines.append((source, target))
+            if lines.count > 3 { lines.removeFirst(lines.count - 3) }
+        }
         if panel.isVisible { render() }
     }
 
@@ -403,6 +461,7 @@ final class CaptionWindow {
 
     func clear() {
         lines = []
+        draftActive = false
         render()
     }
 
@@ -593,6 +652,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.wsTask?.send(.data(data)) { error in
                         if let error { log("帧发送失败：" + error.localizedDescription) }
                     }
+                }, onPartial: { [weak self] data in
+                    self?.wsTask?.send(.data(data)) { error in
+                        if let error { log("草稿发送失败：" + error.localizedDescription) }
+                    }
                 }, onError: { [weak self] message in
                     self?.fail(message)
                 })
@@ -633,11 +696,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleMessage(_ message: [String: Any]) {
         switch message["type"] as? String {
+        case "partial":
+            if let source = message["source"] as? String {
+                let target = message["target"] as? String ?? ""
+                DispatchQueue.main.async {
+                    self.captions.updateDraft(source: source, target: target)
+                }
+            }
         case "transcript":
             if let utterance = message["utterance"] as? [String: Any],
                let source = utterance["source"] as? String {
+                let rough = utterance["target"] as? String ?? ""
                 DispatchQueue.main.async {
-                    self.captions.update(source: source, target: "")
+                    self.captions.update(source: source, target: rough)
                 }
             }
         case "translation":

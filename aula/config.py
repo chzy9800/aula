@@ -132,7 +132,10 @@ class Settings:
     port: int = 8780
 
     def resolved_asr_model(self) -> str:
-        return self.asr_model or DEFAULT_ASR_MODELS.get(self.asr_provider, "whisper-1")
+        # 必须用解析后的 provider（auto→whisper/gemini/...）查表：用原始 "auto"
+        # 查不到就落 "whisper-1"，本地 whisper 会拿它当模型名去 HuggingFace
+        # 下载一个不存在的仓库，第一次转写永久挂起（实测踩过）。
+        return self.asr_model or DEFAULT_ASR_MODELS.get(self.pick_asr_provider(), "whisper-1")
 
     def pick_mt(self) -> str:
         """translate_engine 的归一化：llm 表示不启用专用接口。"""

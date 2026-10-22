@@ -87,6 +87,12 @@ class VADProcessor extends AudioWorkletProcessor {
     this.silenceMs = o.silenceMs || 700;
     this.minSpeechMs = o.minSpeechMs || 350;
     this.maxSegmentMs = o.maxSegmentMs || 15000;
+    // 流式草稿：说话过程中每 partialMs 发一次已积累的音频，服务端立即出
+    // 中间结果——YouTube 式"边说边出字"靠它，不等整句说完。
+    this.partialMs = o.partialMs || 900;
+    this.partialSamples = (this.partialMs / 1000) * this.targetRate;
+    this.partialWindowSamples = (8000 / 1000) * this.targetRate; // 草稿最多带 8 秒尾巴
+    this.sincePartial = 0;
     this.ratio = sampleRate / this.targetRate;
     this.windowSamples = (this.targetRate * 20) / 1000;
     this.inBuf = new Float32Array(0);
@@ -104,6 +110,7 @@ class VADProcessor extends AudioWorkletProcessor {
     this.segSamples = 0;
     this.silenceSamples = 0;
     this.startSample = 0;
+    this.sincePartial = 0;
     this.lastVoice = 0; // 最后一个"有声"窗口的结束位置，用于裁掉尾部静音
   }
 
@@ -138,6 +145,11 @@ class VADProcessor extends AudioWorkletProcessor {
 
       const silenceLimit = (this.silenceMs / 1000) * this.targetRate;
       const maxLen = (this.maxSegmentMs / 1000) * this.targetRate;
+      this.sincePartial += window.length;
+      if (this.sincePartial >= this.partialSamples && this.silenceSamples < silenceLimit) {
+        this.sincePartial = 0;
+        this.emitPartial();
+      }
       if (this.silenceSamples >= silenceLimit || this.segSamples >= maxLen) {
         this.flush();
       }
@@ -147,6 +159,35 @@ class VADProcessor extends AudioWorkletProcessor {
     if (this.levelCount % 6 === 0) {
       this.port.postMessage({ type: "level", rms });
     }
+  }
+
+  emitPartial() {
+    if (!this.speaking || this.segSamples < (this.minSpeechMs / 1000) * this.targetRate) return;
+    // 只带最近 8 秒：更长的句子草稿会缺开头，但定稿完整——草稿只求快
+    const total = this.segSamples;
+    const keep = Math.min(total, this.partialWindowSamples);
+    const skip = total - keep;
+    const merged = new Float32Array(keep);
+    let offset = 0;
+    for (const chunk of this.chunks) {
+      const start = offset;
+      offset += chunk.length;
+      const from = Math.max(start, skip);
+      const to = Math.min(start + chunk.length, total);
+      if (to <= from) continue;
+      merged.set(chunk.subarray(from - start, to - start), from - skip);
+    }
+    const pcm = new Int16Array(keep);
+    for (let i = 0; i < keep; i++) {
+      const v = Math.max(-1, Math.min(1, merged[i]));
+      pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+    }
+    const startMs = ((this.startSample + skip) / this.targetRate) * 1000;
+    const endMs = ((this.startSample + total) / this.targetRate) * 1000;
+    this.port.postMessage(
+      { type: "partial", pcm: pcm.buffer, startMs, endMs },
+      [pcm.buffer]
+    );
   }
 
   flush() {
@@ -344,6 +385,7 @@ async function startRecording() {
       return;
     }
     if (data.type === "segment") sendSegment(data);
+    if (data.type === "partial") sendSegment({ ...data, partial: true });
   };
 
   const sink = ctx.createGain();
@@ -414,8 +456,9 @@ async function stopRecording() {
   updateStatus();
 }
 
-function sendSegment({ pcm, startMs, endMs }) {
+function sendSegment({ pcm, startMs, endMs, partial }) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    if (partial) return;   // 草稿丢了无所谓，下一帧马上来
     // 以前这里直接 return，等于"这节课记全了"变成一句没人验证的话。
     // 重连期间的句子是真的丢了——说出来，只提示一次，别刷屏。
     if (state.recording && !sendSegment._warned) {
@@ -426,11 +469,13 @@ function sendSegment({ pcm, startMs, endMs }) {
   }
   sendSegment._warned = false;
   const bytes = new Uint8Array(pcm);
-  const frame = new Uint8Array(8 + bytes.length);
+  // 帧头 12 字节：start_ms / end_ms / flags（bit0 = 草稿）。旧 8 字节帧服务端兼容。
+  const frame = new Uint8Array(12 + bytes.length);
   const view = new DataView(frame.buffer);
   view.setUint32(0, Math.round(startMs), true);
   view.setUint32(4, Math.round(endMs), true);
-  frame.set(bytes, 8);
+  view.setUint32(8, partial ? 1 : 0, true);
+  frame.set(bytes, 12);
   state.ws.send(frame);
 }
 
@@ -464,6 +509,10 @@ function connectWs() {
       if (data.asr.provider === "mock") toast("演示模式：转写是预置句子", "ready");
       return;
     }
+    if (data.type === "partial") {
+      applyPartial(data);
+      return;
+    }
     if (data.type === "transcript") {
       state.seq = data.utterance.seq;
       state.segments += 1;
@@ -471,6 +520,8 @@ function connectWs() {
         state.latencies.push(data.latency_ms);
         if (state.latencies.length > 20) state.latencies.shift();
       }
+      // 这句话的草稿节点升级成定稿（草稿 key ≤ 定稿 key 的一律收掉）
+      dropLiveNodes(Math.round(data.utterance.start_ms));
       appendUtterance(data.utterance);
       updateStatus();
       return;
@@ -563,9 +614,43 @@ function appendUtterance(item) {
   }
 }
 
+/** 流式草稿：说话过程中服务端每秒出的中间结果，浅色显示、原地刷新。 */
+function applyPartial(data) {
+  if (!data.source) return;
+  const key = Math.round(data.key);
+  let node = $("transcript").querySelector(`.utt.live[data-key="${key}"]`);
+  if (!node) {
+    $("emptyHint").classList.add("hidden");
+    node = document.createElement("div");
+    node.className = "utt live";
+    node.dataset.key = key;
+    const text = document.createElement("div");
+    text.className = "text";
+    const src = document.createElement("div");
+    src.className = "src";
+    text.appendChild(src);
+    const dst = document.createElement("div");
+    dst.className = "dst";
+    text.appendChild(dst);
+    node.appendChild(text);
+    $("transcript").appendChild(node);
+  }
+  node.querySelector(".src").textContent = data.source;
+  node.querySelector(".dst").textContent = data.target || "";
+  if ($("autoScroll").checked) {
+    $("transcript").scrollHeight && ($("transcript").scrollTop = $("transcript").scrollHeight);
+  }
+}
+
+/** 定稿到达：把这句话的所有草稿节点收掉（定稿带完整操作按钮）。 */
+function dropLiveNodes(finalKey) {
+  $("transcript").querySelectorAll(".utt.live").forEach((node) => {
+    if (Number(node.dataset.key) <= finalKey) node.remove();
+  });
+}
+
 /** 译文后到：填回对应那句。找不到节点就说明这节课已经被切走了，静默忽略。 */
-function applyTranslation(seq, target) {
-  if (!target) return;
+function applyTranslation(seq, target) {  if (!target) return;
   const node = $("transcript").querySelector(`.utt[data-seq="${seq}"]`);
   if (!node) return;
   if (node.__item) node.__item.target = target;   // 之后"插入笔记"拿精译，不是粗译

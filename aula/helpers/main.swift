@@ -81,8 +81,12 @@ final class VadSegmenter {
     var clock = 0
 
     var onSegment: ((Data, UInt32, UInt32) -> Void)?
+    var onPartial: ((Data, UInt32, UInt32) -> Void)?
+    let partialMs: Double = 900          // 流式草稿间隔，与浏览器 worklet 一致
+    let partialWindowSamples = 8000 * 16 // 草稿最多带 8 秒尾巴
     private var windowCount = 0
     private var pending: [Int16] = []
+    private var sincePartial = 0
 
     init(silenceMs: Double, minSpeechMs: Double, maxSegmentMs: Double) {
         self.silenceMs = silenceMs
@@ -141,10 +145,35 @@ final class VadSegmenter {
             if Double(silenceSamples) / targetRate * 1000 >= silenceMs
                 || Double(segSamples) / targetRate * 1000 >= maxSegmentMs {
                 flush()
+            } else {
+                sincePartial += windowSamples
+                if sincePartial >= Int(partialMs / 1000 * targetRate) {
+                    sincePartial = 0
+                    emitPartial()
+                }
             }
         }
 
         windowCount += 1
+    }
+
+    /// 流式草稿：只带最近 8 秒，flags=1。丢了无所谓，下一帧马上来。
+    private func emitPartial() {
+        guard speaking, segSamples >= Int(minSpeechMs / 1000 * targetRate) else { return }
+        let total = segSamples
+        let keep = min(total, partialWindowSamples)
+        let skip = total - keep
+        let payload = chunk.suffix(keep)
+        var data = Data(capacity: 12 + keep * 2)
+        let startMs = UInt32((Double(startSample + skip) / targetRate) * 1000)
+        let endMs = UInt32((Double(startSample + total) / targetRate) * 1000)
+        withUnsafeBytes(of: startMs.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: endMs.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: UInt32(1).littleEndian) { data.append(contentsOf: $0) }
+        payload.withUnsafeBufferPointer { buffer in
+            data.append(contentsOf: UnsafeRawBufferPointer(buffer))
+        }
+        onPartial?(data, startMs, endMs)
     }
 
     private func flush() {
@@ -160,11 +189,12 @@ final class VadSegmenter {
 
         if total >= minSamples {
             let payload = chunk.prefix(keep)
-            var data = Data(capacity: 8 + keep * 2)
+            var data = Data(capacity: 12 + keep * 2)
             let startMs = UInt32((Double(startSample) / targetRate) * 1000)
             let endMs = UInt32((Double(startSample + keep) / targetRate) * 1000)
             withUnsafeBytes(of: startMs.littleEndian) { data.append(contentsOf: $0) }
             withUnsafeBytes(of: endMs.littleEndian) { data.append(contentsOf: $0) }
+            withUnsafeBytes(of: UInt32(0).littleEndian) { data.append(contentsOf: $0) }
             payload.withUnsafeBufferPointer { buffer in
                 data.append(contentsOf: UnsafeRawBufferPointer(buffer))
             }
@@ -174,6 +204,7 @@ final class VadSegmenter {
         chunk = []
         segSamples = 0
         silenceSamples = 0
+        sincePartial = 0
         lastVoice = 0
     }
 }
@@ -239,6 +270,9 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         sender = WsSender(url: url)
         segmenter = VadSegmenter(silenceMs: args.silenceMs, minSpeechMs: args.minSpeechMs, maxSegmentMs: args.maxSegmentMs)
         segmenter?.onSegment = { [weak self] data, _, _ in
+            self?.sender?.send(data)
+        }
+        segmenter?.onPartial = { [weak self] data, _, _ in
             self?.sender?.send(data)
         }
 

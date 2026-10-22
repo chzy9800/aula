@@ -403,6 +403,16 @@ input:focus, select:focus, textarea:focus {
 .utt .text { min-width: 0; flex: 1 1 auto; }
 .utt .src { color: var(--text); }
 .utt .dst { color: #9db9e8; margin-top: 3px; }
+.utt.live { opacity: 0.68; }
+.utt.live .src { font-style: italic; }
+.utt.live .dst { font-style: italic; }
+.utt.live::after {
+  content: "…";
+  color: var(--text-faint);
+  font-style: normal;
+  animation: breathe 1.2s ease-in-out infinite;
+}
+@keyframes breathe { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 .utt .dst.refined { animation: refinedFlash 0.9s var(--ease-out); }
 @keyframes refinedFlash {
   0% { color: #e8f0ff; text-shadow: 0 0 14px rgba(120, 170, 255, 0.55); }

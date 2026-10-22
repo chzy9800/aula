@@ -212,6 +212,33 @@ class ApiTest(unittest.TestCase):
             message = ws.receive_json()
             self.assertEqual(message["type"], "error")
 
+    def test_websocket_partial_streaming_drafts(self):
+        """流式草稿：说话过程中 flags=1 的帧立即转写广播，不入库。
+
+        这是"YouTube 式边说边出字"的核心：不等整句说完（VAD 静音），
+        说话中每秒就有一版中间结果。
+        """
+        sid = self.new_session()
+        pcm = b"\x00\x00" * 16000  # 1 秒
+        partial_frame = struct.pack("<III", 500, 10500, 1) + pcm
+        final_frame = struct.pack("<III", 500, 11000, 0) + pcm
+
+        with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
+            self.assertEqual(ws.receive_json()["type"], "ready")
+            ws.send_bytes(partial_frame)
+            draft = ws.receive_json()
+            self.assertEqual(draft["type"], "partial", "草稿帧必须立即出中间结果")
+            self.assertEqual(draft["key"], 500)
+            self.assertTrue(draft["source"], "草稿要有文字")
+
+            ws.send_bytes(final_frame)
+            final = ws.receive_json()
+            self.assertEqual(final["type"], "transcript", "定稿走原有链路")
+            self.assertEqual(final["key"], 500, "定稿带 key，前端好收掉草稿节点")
+
+        detail = self.client.get(f"/api/sessions/{sid}").json()
+        self.assertEqual(len(detail["utterances"]), 1, "草稿绝不入库，只有定稿")
+
     def test_websocket_fast_translation_then_refinement(self):
         """快速粗译接力：粗译随原文先到，LLM 精译随后覆盖。
 

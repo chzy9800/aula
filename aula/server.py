@@ -10,6 +10,7 @@
     服务端 → 客户端
       {"type": "ready", ...}                         连接就绪，带上生效的模型
       {"type": "transcript", ...}                    一句话的转写 + 译文
+      {"type": "partial", ...}                       流式草稿（边说边出字，不入库）
       {"type": "summary", ...}                       自动总结推送
       {"type": "status", ...}                        队列状态
       {"type": "error", "message": "..."}             出错但不掉线
@@ -61,6 +62,9 @@ class Engines:
 
     def __init__(self, settings: config.Settings) -> None:
         self._lock = asyncio.Lock()
+        # 本地 whisper 模型不支持并发推理：草稿转写与定稿转写共享这把锁，
+        # 谁先拿到谁先跑，另一个等——乱并发会崩解释器级的状态。
+        self.asr_lock = asyncio.Lock()
         self.settings = settings
         self.rebuild(settings)
 
@@ -473,6 +477,47 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
 
         queue: "asyncio.Queue[Optional[tuple]]" = asyncio.Queue(maxsize=64)
         stop = asyncio.Event()
+        # 流式草稿：客户端每 ~0.9 秒推一次"说到现在的音频"，这里只留最新一份；
+        # partial_worker 立即转写并广播。同一句话的草稿逐帧覆盖，永远只算最新。
+        latest_partial: Dict[str, Any] = {"pcm": None, "start_ms": 0, "end_ms": 0, "seq_id": 0}
+        partial_done = {"seq_id": 0}
+
+        async def partial_worker() -> None:
+            while not stop.is_set():
+                await asyncio.sleep(0.12)
+                if latest_partial["seq_id"] <= partial_done["seq_id"]:
+                    continue
+                partial_done["seq_id"] = latest_partial["seq_id"]
+                pcm = latest_partial["pcm"]
+                if pcm is None:
+                    continue
+                # 定稿优先：定稿在队列里等着，草稿让路（马上会被定稿覆盖）
+                if not queue.empty():
+                    continue
+                try:
+                    async with engines.asr_lock:
+                        result, _ = await engines.asr.transcribe(
+                            pcm, current.sample_rate, current.source_lang
+                        )
+                except ASRError:
+                    continue
+                text = (result.text or "").strip()
+                if not text:
+                    continue
+                rough = ""
+                if engines.fast_mt is not None:
+                    try:
+                        rough = await asyncio.to_thread(
+                            engines.fast_mt.translate, text,
+                            engines.settings.source_lang, engines.settings.target_lang,
+                        )
+                    except Exception:  # noqa: BLE001
+                        rough = ""
+                await _broadcast(
+                    session_id,
+                    {"type": "partial", "key": latest_partial["start_ms"],
+                     "source": text, "target": rough},
+                )
 
         async def worker() -> None:
             while not stop.is_set():
@@ -482,9 +527,10 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     break
                 pcm, start_ms, end_ms = item
                 try:
-                    result, asr_ms = await engines.asr.transcribe(
-                        pcm, current.sample_rate, current.source_lang
-                    )
+                    async with engines.asr_lock:
+                        result, asr_ms = await engines.asr.transcribe(
+                            pcm, current.sample_rate, current.source_lang
+                        )
                 except ASRError as exc:
                     await _broadcast(session_id, {"type": "error", "message": str(exc), "stage": "asr"})
                     queue.task_done()
@@ -522,6 +568,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                         "utterance": record,
                         "latency_ms": asr_ms,
                         "provider": result.provider,
+                        "key": start_ms,
                     },
                 )
 
@@ -574,6 +621,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
 
         worker_task = asyncio.create_task(worker())
         summary_task = asyncio.create_task(auto_summary())
+        partial_task = asyncio.create_task(partial_worker())
 
         try:
             while True:
@@ -582,11 +630,27 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     break
                 raw = message.get("bytes")
                 if raw is not None:
-                    if len(raw) <= 8:
+                    # 帧头：<II> 8 字节（旧版，flags=0）或 <III> 12 字节（flags bit0=草稿）
+                    if len(raw) >= 12:
+                        start_ms, end_ms, flags = struct.unpack("<III", raw[:12])
+                        pcm = raw[12:]
+                    elif len(raw) > 8:
+                        start_ms, end_ms = struct.unpack("<II", raw[:8])
+                        flags = 0
+                        pcm = raw[8:]
+                    else:
                         continue
-                    start_ms, end_ms = struct.unpack("<II", raw[:8])
-                    pcm = raw[8:]
-                    if len(pcm) < current.sample_rate:  # <0.5 秒，丢弃
+                    if len(pcm) < current.sample_rate // 2:  # <0.25 秒，丢弃
+                        continue
+                    if flags & 1:
+                        # 草稿帧：不入库不排队，直接刷新"最新草稿"，由
+                        # partial_worker 立即转写——YouTube 式边说边出字。
+                        if len(pcm) < current.sample_rate:  # 草稿至少 0.5 秒，太短没意义
+                            continue
+                        latest_partial["pcm"] = pcm
+                        latest_partial["start_ms"] = start_ms
+                        latest_partial["end_ms"] = end_ms
+                        latest_partial["seq_id"] += 1
                         continue
                     if queue.full():
                         await _broadcast(session_id, {"type": "status", "message": "处理不过来，丢弃一段"})
@@ -606,9 +670,9 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
         finally:
             stop.set()
             await queue.put(None)
-            for task in (worker_task, summary_task):
+            for task in (worker_task, summary_task, partial_task):
                 task.cancel()
-            await asyncio.gather(worker_task, summary_task, return_exceptions=True)
+            await asyncio.gather(worker_task, summary_task, partial_task, return_exceptions=True)
             _HUBS.get(session_id, set()).discard(websocket)
             if not _HUBS.get(session_id):
                 _HUBS.pop(session_id, None)
