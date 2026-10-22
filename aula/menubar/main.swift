@@ -409,7 +409,9 @@ final class CaptionWindow {
     private func render() {
         stack.views.forEach { stack.removeView($0) }
         if lines.isEmpty {
-            stack.addArrangedSubview(makeLabel("上课时，字幕会浮在这里。", size: 12, dim: true))
+            stack.addArrangedSubview(makeLabel("✓ aula 已在菜单栏运行", size: 13, dim: false, bold: true))
+            stack.addArrangedSubview(makeLabel("点右上角菜单栏的波形图标，选「开始听课」。", size: 11, dim: true))
+            stack.addArrangedSubview(makeLabel("上课时，双语字幕会浮在这里。", size: 11, dim: true))
         }
         for line in lines.reversed() {
             if !line.target.isEmpty {
@@ -531,7 +533,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.tick()
         }
-        log("菜单栏应用已启动")
+
+        // 首启自动亮一次字幕窗：菜单栏应用没有窗口，不主动出声一次会像"没打开"
+        captions.toggle()
+        captionToggleItem.title = "隐藏悬浮字幕"
+        log("菜单栏应用已启动，字幕窗已展示")
     }
 
     private func tick() {
