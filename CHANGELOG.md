@@ -4,6 +4,17 @@
 
 ## [未发布]
 
+## [0.7.1] - 2026-10-22
+
+### 新增：Mac 菜单栏应用 aula.app
+
+- `aula/menubar/main.swift`（AppKit，单文件）+ `scripts/build_menubar.sh`（编译 → 组装 bundle → ad-hoc 签名 → 装到 ~/Applications）
+- 菜单栏常驻：开始/结束听课、听课时长计时、显示/隐藏悬浮字幕、打开工作台、服务状态与自动拉起（健康检查失败时 spawn `python -m aula serve`）
+- **悬浮字幕窗**：屏幕右下角毛玻璃浮层，最新一句译文大字 + 原文小字，保留最近 3 句——上课时叠在任何窗口上都看得见，不必切回浏览器
+- **权限归 app 自身**：内嵌同款 ScreenCaptureKit 捕获 + VAD，bundle id 固定（com.chzy.aula.menubar），「屏幕录制」批一次永久有效——比 CLI 助手挂在终端上干净
+- LSUIElement 无 Dock 图标；转写与翻译仍由 aula 服务端完成，应用只是遥控器 + 显示器
+
+
 ## [0.7.0] - 2026-10-22
 
 ### 新增：系统声音·本机助手（macOS 网课的正解）

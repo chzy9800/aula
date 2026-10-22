@@ -85,6 +85,8 @@ aula --asr-provider whisper --asr-model small --open
 
 为什么 macOS 桌面客户端要走 BlackHole：浏览器的 `getDisplayMedia` 在 macOS 上**只给标签页音频**——抓系统级音频需要 ScreenCaptureKit（原生 API，浏览器页面拿不到权限）。AirTranslate 这类原生应用就是这么做的；aula 现在也内置了同款方案的 Swift 助手（docs/reverse-engineering-airtranslate.md 记录了逆向依据）。系统声音的采集会**关掉回声消除/降噪/自动增益**——那三样是为麦克风语音设计的，会把课件音频搅坏。
 
+不想跟终端打交道？`bash scripts/build_menubar.sh` 一条命令装出菜单栏应用 **aula.app**：常驻菜单栏一键开始/结束听课，屏幕右下角浮着双语字幕，服务没起会自动拉起。权限批给 app 自身，一次永久。
+
 ## 内置服务商与免密钥翻译
 
 `--provider` 一条命令切换，接口地址与模型名自动填好；密钥从各家约定环境变量读。

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aula"
-version = "0.7.0"
+version = "0.7.1"
 description = "课堂到笔记：实时转写、逐句翻译、讲义双语对照、结构化听课记录"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,4 +36,4 @@ Homepage = "https://github.com/chzy9800/aula"
 include = ["aula*"]
 
 [tool.setuptools.package-data]
-aula = ["static/*", "static/vendor/*", "helpers/*", "examples/*"]  # favicon.svg 走 static/*
+aula = ["static/*", "static/vendor/*", "helpers/*", "menubar/*", "examples/*"]  # favicon.svg 走 static/*
