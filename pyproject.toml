@@ -36,4 +36,4 @@ Homepage = "https://github.com/chzy9800/aula"
 include = ["aula*"]
 
 [tool.setuptools.package-data]
-aula = ["static/*", "static/vendor/*", "examples/*"]
+aula = ["static/*", "static/vendor/*", "examples/*"]  # favicon.svg 走 static/*

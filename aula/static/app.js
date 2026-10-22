@@ -332,7 +332,16 @@ async function stopRecording() {
 }
 
 function sendSegment({ pcm, startMs, endMs }) {
-  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    // 以前这里直接 return，等于"这节课记全了"变成一句没人验证的话。
+    // 重连期间的句子是真的丢了——说出来，只提示一次，别刷屏。
+    if (state.recording && !sendSegment._warned) {
+      sendSegment._warned = true;
+      toast("实时连接未就绪，有句子没记上（正在重连）", "error");
+    }
+    return;
+  }
+  sendSegment._warned = false;
   const bytes = new Uint8Array(pcm);
   const frame = new Uint8Array(8 + bytes.length);
   const view = new DataView(frame.buffer);
@@ -732,14 +741,20 @@ async function loadSession(sessionId) {
   $("statSegments").textContent = `${detail.utterances.length} 句`;
   updateStatus();
 
-  if (state.recording) {
-    if (state.ws) state.ws.close();
-    state.ws = null;
-    connectWs();
-  }
+  // 兜底：新建/切换课堂在界面上都已在录音时拦住。真走到这里说明有调用绕过了
+  // 守卫——先把当前这节课收尾（flush 进旧 session），绝不让音频漂移到另一节课名下。
+  if (state.recording) await stopRecording();
+}
+
+/** 录音期间不许换课堂：换 session 等于把这节课的后半段记到另一节课名下。 */
+function blockWhileRecording(action) {
+  if (!state.recording) return false;
+  toast(`正在听课，先点「结束听课」再${action}`, "error");
+  return true;
 }
 
 async function newSession() {
+  if (blockWhileRecording("新建课堂")) return;
   const title = prompt("这节课叫什么？", new Date().toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) + " 的课");
   if (title === null) return;
   const session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title }) });
@@ -994,8 +1009,14 @@ async function boot() {
     if (state.preview) togglePreview();
   };
   $("sessionSelect").onchange = async (event) => {
+    const next = event.target.value;
+    // 拦住并把下拉框弹回去：否则界面显示的是新课堂、内容却是旧课堂的
+    if (blockWhileRecording("切换课堂")) {
+      event.target.value = state.sessionId;
+      return;
+    }
     if (state.dirty) await saveNote();
-    await loadSession(event.target.value);
+    await loadSession(next);
   };
   $("sourceLang").onchange = async (event) => {
     await api("/api/config", { method: "PUT", body: JSON.stringify({ source_lang: event.target.value }) });
