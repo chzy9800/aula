@@ -229,6 +229,48 @@ registerProcessor("vad", VADProcessor);
 
 /* ---------- 录音链路 ---------- */
 
+/** 拿音频流：麦克风（现场课堂）或标签页/系统声音（网课）。 */
+async function acquireStream() {
+  const source = $("audioSource") ? $("audioSource").value : "mic";
+  if (source !== "system") {
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,       // 麦克风才需要这些为语音设计的处理
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  }
+
+  // 网课：抓正在播放的声音。getDisplayMedia 在 Chrome/Edge 里可以只共享
+  // 标签页音频（macOS 唯一可行的系统级方案），Windows 上共享整个屏幕还能
+  // 连 Zoom 桌面客户端的系统声音一起抓。Safari 不支持，会走上面的分支提示。
+  if (!navigator.mediaDevices.getDisplayMedia) {
+    throw new Error("这个浏览器不支持抓取播放中的声音，请用 Chrome/Edge，或改用麦克风");
+  }
+  const display = await navigator.mediaDevices.getDisplayMedia({
+    video: true,   // 浏览器要求必须带视频轨，拿到后立刻停掉，只要声音
+    audio: {
+      // 系统声音不是麦克风：回声消除/降噪/自动增益都会把课件音频搅坏
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+  });
+  const audioTrack = display.getAudioTracks()[0];
+  if (!audioTrack) {
+    display.getTracks().forEach((track) => track.stop());
+    throw new Error("分享时没有勾选「分享标签页音频」，只拿到了画面");
+  }
+  display.getVideoTracks().forEach((track) => track.stop());
+  // 用户点浏览器的「停止共享」= 这节课的声音源没了，自动收尾
+  audioTrack.onended = () => {
+    if (state.recording) stopRecording();
+  };
+  return new MediaStream([audioTrack]);
+}
+
 async function startRecording() {
   if (state.recording) return;
   if (!state.sessionId) {
@@ -242,16 +284,9 @@ async function startRecording() {
 
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+    stream = await acquireStream();
   } catch (err) {
-    toast("麦克风权限被拒绝：" + err.message, "error");
+    toast(String(err.message || err), "error");
     return;
   }
 

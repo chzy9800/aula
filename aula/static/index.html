@@ -40,6 +40,10 @@
 
     <div class="group controls">
       <span id="statusBadge" class="badge idle" title="转写状态">待机</span>
+      <select id="audioSource" title="音频来源：现场课堂选麦克风；网课选标签页/系统声音">
+        <option value="mic">麦克风（现场课堂）</option>
+        <option value="system">标签页/系统声音（网课）</option>
+      </select>
       <button id="recordBtn" class="rec">开始听课</button>
       <button id="settingsBtn" class="ghost">设置</button>
     </div>
@@ -58,7 +62,9 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><path d="M8 6v4"/><path d="M16 6v4"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M9 21h6"/></svg>
         </div>
         点右上角「开始听课」，老师说的每一句会带译文实时出现在这里。<br />
-        没有麦克风或想先试界面，可以在「设置」里把转写切到演示模式。
+        上网课：把音频来源切到「标签页/系统声音」，分享时勾选「分享标签页音频」即可——
+        老师的声音直接从电脑里转录，不需要外放也不需要麦克风。<br />
+        现场课堂选「麦克风」。没有麦克风或想先试界面，可以在「设置」里把转写切到演示模式。
       </div>
       <div class="meter"><div id="levelBar" class="level-bar"></div></div>
     </section>
