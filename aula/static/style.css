@@ -403,6 +403,19 @@ input:focus, select:focus, textarea:focus {
 .utt .text { min-width: 0; flex: 1 1 auto; }
 .utt .src { color: var(--text); }
 .utt .dst { color: #9db9e8; margin-top: 3px; }
+/* 译文未到：一条会呼吸的微光，比空白更明确地表达"正在翻" */
+.utt .dst.pending {
+  min-height: 1.1em;
+  width: 46%;
+  border-radius: 5px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(157, 185, 232, 0.22), rgba(255, 255, 255, 0.05));
+  background-size: 200% 100%;
+  animation: pendingGlow 1.4s ease-in-out infinite;
+}
+@keyframes pendingGlow {
+  0% { background-position: 200% 0; opacity: 0.55; }
+  100% { background-position: -200% 0; opacity: 1; }
+}
 .utt .actions {
   position: absolute;
   right: 8px;

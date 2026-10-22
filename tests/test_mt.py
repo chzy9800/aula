@@ -162,6 +162,55 @@ class TranslatorFallbackTest(unittest.TestCase):
         self.assertEqual(translator.translate("Hola"), "大模型译文")
 
 
+class FragmentContextTest(unittest.TestCase):
+    """残句要带上一句：静音落在句中时，"de nuestro diferencial." 单独译会崩。"""
+
+    class RecordingLLM:
+        def __init__(self):
+            self.users = []
+            self.systems = []
+
+        def chat(self, messages, **kwargs):
+            self.users.append(messages[-1]["content"])
+            self.systems.append(messages[0]["content"])
+            return "译文"
+
+    def test_continuation_detection(self):
+        from aula.translate import _is_continuation
+
+        # 实测里被切断的残句
+        for text in ("de nuestro diferencial.", "por tradición eléctrica.",
+                     "como protocolo seguir siempre", "entramos siempre por",
+                     "y el neutro", "de tensiones en las protecciones"):
+            self.assertTrue(_is_continuation(text, "es"), text)
+        # 完整句子不该触发
+        for text in ("El diferencial protege a las personas.",
+                     "Hay que medir la tensión de alimentación antes de intervenir.",
+                     "Ahora bien."):
+            self.assertFalse(_is_continuation(text, "es"), text)
+
+    def test_fragment_gets_previous_sentence(self):
+        llm = self.RecordingLLM()
+        translator = Translator(llm, "es", "zh")
+        translator.translate("Otra cosa sencilla que hay que comprobar siempre.")
+        translator.translate("de nuestro diferencial.")
+        self.assertNotIn("上一句", llm.users[0], "完整句子不该带上下文（守住逐句低延迟）")
+        self.assertIn("上一句", llm.users[1])
+        self.assertIn("Otra cosa sencilla", llm.users[1])
+
+    def test_english_continuations(self):
+        from aula.translate import _is_continuation
+
+        self.assertTrue(_is_continuation("and the neutral wire", "en"))
+        self.assertTrue(_is_continuation("which means the circuit", "en"))
+        self.assertFalse(_is_continuation("The breaker trips at 25 amperes.", "en"))
+
+    def test_first_sentence_has_no_context(self):
+        llm = self.RecordingLLM()
+        Translator(llm, "es", "zh").translate("de nuestro diferencial.")
+        self.assertNotIn("上一句", llm.users[0], "没有上一句可带")
+
+
 class ConfigTest(unittest.TestCase):
     def test_pick_mt(self):
         self.assertEqual(config.Settings(translate_engine="llm").pick_mt(), "llm")
@@ -188,6 +237,71 @@ class TableTest(unittest.TestCase):
             self.assertIn(provider.id, table)
         self.assertIn("额度 / 限制", table)
         self.assertIn("免密钥", table)
+
+
+class TermHarvestTest(unittest.TestCase):
+    """从译文里回收术语对：同一术语在一节课里必须只有一种译法。"""
+
+    def harvest(self, *samples):
+        from collections import OrderedDict
+
+        from aula.translate import harvest_terms
+
+        glossary = OrderedDict()
+        for sample in samples:
+            harvest_terms(sample, glossary)
+        return glossary
+
+    def test_learns_pairs_from_real_translations(self):
+        glossary = self.harvest(
+            "挂牌上锁（consignación）确保电线路上不带电压。",
+            "进度表/时间表（cronograma）决定每项活动的日期。",
+            "断路器（interruptor）跳闸了。",
+        )
+        self.assertEqual(glossary["consignación"], "挂牌上锁")
+        self.assertEqual(glossary["cronograma"], "进度表", "带别名时取第一个")
+        self.assertEqual(glossary["interruptor"], "断路器")
+
+    def test_skips_explanatory_parentheses(self):
+        # 模型写成「价差/差额（diferencial：价差/差额）」是在解释，不是在标注术语
+        glossary = self.harvest("价差/差额（diferencial：价差/差额）保护着人们。")
+        self.assertEqual(dict(glossary), {})
+
+    def test_skips_long_descriptive_run(self):
+        # 词组必须紧邻括号；「这里用差动保护器」截成「动保护器」比不学更糟
+        glossary = self.harvest("这里用差动保护器（diferencial），它跳闸很灵敏。")
+        self.assertEqual(dict(glossary), {})
+
+    def test_evicts_oldest_over_limit(self):
+        from collections import OrderedDict
+
+        from aula.translate import harvest_terms
+
+        glossary = OrderedDict()
+        words = ["进度表", "工期表", "风险表", "材料表", "人员表", "验收表"]
+        for index in range(9):
+            harvest_terms("%s（termino%d）说明。" % (words[index % 6], index), glossary, limit=4)
+        self.assertEqual(len(glossary), 4)
+        self.assertIn("termino8", glossary)
+        self.assertNotIn("termino0", glossary, "最久没用的先淘汰")
+
+    def test_glossary_injected_into_prompt(self):
+        from collections import OrderedDict
+
+        class Spy:
+            def __init__(self):
+                self.systems = []
+
+            def chat(self, messages, **kwargs):
+                self.systems.append(messages[0]["content"])
+                return "译文"
+
+        llm = Spy()
+        translator = Translator(llm, "es", "zh")
+        translator.glossary = OrderedDict({"consignación": "断电挂牌"})
+        translator.translate("otra frase cualquiera.")
+        self.assertIn("固定译名", llm.systems[0])
+        self.assertIn("consignación→断电挂牌", llm.systems[0])
 
 
 if __name__ == "__main__":

@@ -392,6 +392,11 @@ function connectWs() {
       updateStatus();
       return;
     }
+    if (data.type === "translation") {
+      // 原文先到、译文后到：把译文填回对应那句（服务端为此单独推一条）
+      applyTranslation(data.seq, data.target);
+      return;
+    }
     if (data.type === "summary") {
       renderSummary(data.summary);
       toast("已自动生成总结", "ready");
@@ -443,6 +448,11 @@ function appendUtterance(item) {
     dst.className = "dst";
     dst.textContent = item.target;
     text.appendChild(dst);
+  } else if (state.config && state.config.translate !== false) {
+    // 译文还没到：先占位，让"正在翻"这件事看得见，而不是像漏了没翻
+    const pending = document.createElement("div");
+    pending.className = "dst pending";
+    text.appendChild(pending);
   }
 
   row.appendChild(time);
@@ -466,6 +476,25 @@ function appendUtterance(item) {
   $("transcript").appendChild(node);
   if ($("autoScroll").checked) {
     $("transcript").scrollTop = $("transcript").scrollHeight;
+  }
+}
+
+/** 译文后到：填回对应那句。找不到节点就说明这节课已经被切走了，静默忽略。 */
+function applyTranslation(seq, target) {
+  if (!target) return;
+  const node = $("transcript").querySelector(`.utt[data-seq="${seq}"]`);
+  if (!node) return;
+  const text = node.querySelector(".text");
+  if (!text) return;
+  const dst = text.querySelector(".dst");
+  if (dst) {
+    dst.textContent = target;
+    dst.classList.remove("pending");
+  } else {
+    const fresh = document.createElement("div");
+    fresh.className = "dst";
+    fresh.textContent = target;
+    text.appendChild(fresh);
   }
 }
 

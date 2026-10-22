@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import struct
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,8 @@ from .transcript import BilingualTurn
 from .translate import Translator
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+logger = logging.getLogger("aula.server")
 
 
 class Engines:
@@ -371,15 +374,14 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     queue.task_done()
                     continue
 
-                translated = ""
-                if engines.translator.enabled:
-                    translated = await asyncio.to_thread(engines.translator.translate, text)
-
+                # 先落库并推送原文：用户约 1 秒就能看到"听到了什么"，
+                # 译文随后补上（带上下文判断残句的翻译要多花约 0.7 秒，
+                # 不该让整句话等他）。
                 record = store.add_utterance(
                     db_path,
                     session_id,
                     source=text,
-                    target=translated,
+                    target="",
                     start_ms=start_ms,
                     end_ms=end_ms,
                     confidence=result.confidence,
@@ -393,6 +395,19 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                         "provider": result.provider,
                     }
                 )
+
+                if engines.translator.enabled:
+                    try:
+                        translated = await asyncio.to_thread(engines.translator.translate, text)
+                    except Exception as exc:  # noqa: BLE001
+                        # 翻译崩了不能连累原文：原文已经推出去了，这里只记一笔
+                        translated = ""
+                        logger.warning("翻译失败（原文已送达）：%s", exc)
+                    if translated:
+                        store.set_translation(db_path, session_id, record["seq"], translated)
+                        await websocket.send_json(
+                            {"type": "translation", "seq": record["seq"], "target": translated}
+                        )
                 queue.task_done()
             stop.set()
 

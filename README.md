@@ -149,13 +149,15 @@ aula/
 ## 测试
 
 ```bash
-python -m unittest discover -s tests -v   # 213 项：解析 / 对齐 / 分块 / 存储 / 引擎 / 接口 / WebSocket / JSON 健壮性
+python -m unittest discover -s tests -v   # 222 项：解析 / 对齐 / 分块 / 存储 / 引擎 / 接口 / WebSocket / JSON 健壮性 / 术语回收
 node tests/vad.test.mjs                   # 7 项：断句算法（把 worklet 源码抽出来喂合成音频）
 python examples/e2e_check.py 8781         # 端到端：建课 → 送音频 → 总结 → 听课记录 → 讲义翻译/提问 → 导出
 python examples/live_check.py             # 真实链路：拿当前配置真调模型（连通性/翻译/术语/大纲/追问/听课记录/兜底）
+python examples/youtube_check.py --search "MF1180"   # 用真实讲座音频测：先列候选
+python examples/youtube_check.py "<URL>" --seconds 180   # 取前 3 分钟跑完整链路
 ```
 
-端到端不依赖任何真实模型：`examples/fake_llm.py` 按提示词返回固定结构，所以 CI 能完整跑通。真实质量必须接真模型看——这一点没有捷径，`examples/live_check.py` 就是为此存在的：它不打桩，逐项计时并给出判定（锚点命中率、翻译秒/句），全部通过才退出 0。
+端到端不依赖任何真实模型：`examples/fake_llm.py` 按提示词返回固定结构，所以 CI 能完整跑通。真实质量必须接真模型看——这一点没有捷径。两个脚本为此存在：`live_check.py` 用固定句子验功能并逐项判定（锚点命中率、翻译秒/句），全部通过才退出 0；`youtube_check.py` 用**真人的课堂语音**验真实条件（噪声、语气词、长短句混排），按与浏览器一致的静音口径切句后逐段跑「转写 → 翻译」。
 
 ## 已知限制
 

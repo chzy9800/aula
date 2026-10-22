@@ -165,7 +165,12 @@ class ApiTest(unittest.TestCase):
 
     # —— 实时链路 ——
 
-    def test_websocket_transcribes_and_translates(self):
+    def test_websocket_transcribes_then_translates(self):
+        """原文先推、译文后到：用户约 1 秒就能看到听到了什么。
+
+        这条断言同时钉住两件事——顺序不能反（译文必须后到），以及译文
+        最终要落库（否则导出与听课记录里会是空的）。
+        """
         sid = self.new_session()
         pcm = b"\x00\x00" * 16000  # 1 秒静音，MockASR 不关心内容
         header = struct.pack("<II", 0, 1000)
@@ -176,15 +181,22 @@ class ApiTest(unittest.TestCase):
             self.assertEqual(ready["asr"]["provider"], "mock")
 
             ws.send_bytes(header + pcm)
-            message = ws.receive_json()
-            self.assertEqual(message["type"], "transcript")
-            utterance = message["utterance"]
+            first = ws.receive_json()
+            self.assertEqual(first["type"], "transcript")
+            utterance = first["utterance"]
             self.assertTrue(utterance["source"])
-            self.assertEqual(utterance["target"], "中文译文")
+            self.assertEqual(utterance["target"], "", "原文那条不该等译文")
             self.assertEqual(utterance["seq"], 1)
+
+            second = ws.receive_json()
+            self.assertEqual(second["type"], "translation")
+            self.assertEqual(second["seq"], 1)
+            self.assertEqual(second["target"], "中文译文")
 
         detail = self.client.get(f"/api/sessions/{sid}").json()
         self.assertEqual(len(detail["utterances"]), 1)
+        self.assertEqual(detail["utterances"][0]["target"], "中文译文",
+                         "译文必须回填到库里，导出与听课记录才拿得到")
 
     def test_websocket_rejects_unknown_session(self):
         with self.client.websocket_connect("/ws/live?session_id=nope") as ws:

@@ -199,6 +199,22 @@ def add_utterance(
     return dict(row) if row else {}
 
 
+def set_translation(db_path: Path, session_id: str, seq: int, target: str) -> bool:
+    """回填译文。
+
+    为什么单独一个接口：原文与译文**不再同时入库**。ASR 一完成就先落库并推给
+    前端（用户约 1 秒就能看到听到了什么），译文随后补上——翻译为了带上下文判
+    断残句，实测要多花约 0.7 秒。让用户等两个都齐了才看到东西，是拿感知延迟
+    换了个看不见的好处。
+    """
+    with _connect(db_path) as conn:
+        cursor = conn.execute(
+            "UPDATE utterances SET target = ? WHERE session_id = ? AND seq = ?",
+            (target, session_id, seq),
+        )
+    return cursor.rowcount > 0
+
+
 def list_utterances(db_path: Path, session_id: str, after_seq: int = 0) -> List[Dict[str, Any]]:
     with _connect(db_path) as conn:
         rows = conn.execute(
