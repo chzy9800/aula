@@ -4,6 +4,22 @@
 
 ## [未发布]
 
+### 新增：听课记录导出——上课到笔记的闭环
+
+下课后 footer 出现「生成听课记录」，点开是一个 sheet：生成中给进度，成功后显示带 YAML
+frontmatter 的 Markdown，能一键复制或保存成 `.md`（直接扔进 Obsidian 就能用）。走服务端
+`POST /api/sessions/{id}/digest`——分块抽取再全局合成，和「课上总结」的区别是这是课后
+正式产出，篇幅和结构都更完整。失败时明确说「转写还在库里，修好网关再点一次」，不假装成功。
+
+`--probe-class <pcm目录> digest` 把这一步也纳入自动验证，实测 3 句转写 → 827–958 字符
+记录，标题、摘要、核心要点、术语表齐全。
+
+**踩到一个工具链硬约束**：`@State` 是 SwiftUI 宏，只有 Command Line Tools（没有完整
+Xcode）时直接编译失败——`plugin for module 'SwiftUIMacros' not found`。改用 `@Published`
+承载 sheet 开关，它是 propertyWrapper、不需要宏插件。`@ObservedObject` / `@Published`
+都能用，只有 `@State` / `@StateObject` / `@Bindable` 这类宏不行。
+
+
 ### 新增：系统声音采集接入原生 app——网课不用再装 BlackHole
 
 `aula/app/SystemAudio.swift`：进程内 ScreenCaptureKit 抓系统混音，参数从 CLI 助手原样

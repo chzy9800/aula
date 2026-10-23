@@ -91,7 +91,7 @@ func pump(_ seconds: Double) {
 
 /// 无 UI 跑通整条课堂链路：起服务 → 建课堂 → 连 WS → 发真实西语 PCM → 断言三层消息。
 /// 这条命令就是「界面能上课」的前置条件，进了 CI 就不用人肉点按钮。
-func runClassProbe(_ pcmDir: String) -> Int32 {
+func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
     let sidecar = Sidecar()
     sidecar.start()
     var waited = 0.0
@@ -197,21 +197,50 @@ func runClassProbe(_ pcmDir: String) -> Int32 {
     if !errors.isEmpty { print("  errors: \(errors)") }
     if !missingTranslation.isEmpty { print("  缺译文的 seq: \(missingTranslation.sorted())") }
 
+    // 听课记录：整条链路最后一步，也是最容易"以为通了其实没通"的一步
+    var digestOK = true
+    if withDigest {
+        print("--- 听课记录 ---")
+        var markdown: String?
+        var failure: String?
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Sidecar.post(sidecar.baseURL + "/api/sessions/\(sid)/digest",
+                                      payload: [:], timeout: 180)
+            if let md = result?["markdown"] as? String, !md.isEmpty {
+                markdown = md
+            } else {
+                failure = "接口返回空或失败"
+            }
+            semaphore.signal()
+        }
+        // 同步等：Sidecar.post 阻塞的是后台线程，主线程在这里等不会死锁
+        _ = semaphore.wait(timeout: .now() + 200)
+        if let md = markdown {
+            print("  markdown: \(md.count) 字符")
+            let preview = md.prefix(240).replacingOccurrences(of: "\n", with: "⏎")
+            print("  开头: \(preview)")
+        } else {
+            print("  FAIL: \(failure ?? "超时")")
+            digestOK = false
+        }
+    }
+
     sidecar.stopAndWait()
-    let ok = transcripts >= 3 && missingTranslation.isEmpty && errors.isEmpty
+    let ok = transcripts >= 3 && missingTranslation.isEmpty && errors.isEmpty && digestOK
     print(ok ? "PROBE OK" : "PROBE FAIL: 消息不完整")
     return ok ? 0 : 1
 }
 
 /// 把上课界面渲染成 PNG（不需要屏幕录制权限，用视图自身缓存）。
 /// 用途：改完 UI 先看图，而不是起 app 逐个点。第二个参数是要灌多少条（长列表基准）。
-func runRenderPreview(_ outputPath: String, count: Int = 3) -> Int32 {
+func runRenderPreview(_ outputPath: String, count: Int = 3, listening: Bool = true) -> Int32 {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
     let store = ClassStore(sidecar: Sidecar())
     let t0 = Date()
-    store.loadDemoLines(count: count)
+    store.loadDemoLines(count: count, listening: listening)
 
     let hosting = NSHostingView(rootView: ClassView(store: store))
     hosting.frame = NSRect(x: 0, y: 0, width: 780, height: 560)
@@ -562,12 +591,13 @@ final class AulaApp {
         }
         if let i = args.firstIndex(of: "--probe-class") {
             let dir = args.count > i + 1 ? args[i + 1] : "."
-            exit(runClassProbe(dir))
+            exit(runClassProbe(dir, withDigest: args.contains("digest")))
         }
         if let i = args.firstIndex(of: "--render-preview") {
             let path = args.count > i + 1 ? args[i + 1] : "/tmp/aula-preview.png"
             let count = args.count > i + 2 ? (Int(args[i + 2]) ?? 3) : 3
-            exit(runRenderPreview(path, count: count))
+            let listening = !(args.count > i + 3 && args[i + 3] == "done")
+            exit(runRenderPreview(path, count: count, listening: listening))
         }
         if args.contains("--probe-permissions") {
             exit(runPermissionProbe())

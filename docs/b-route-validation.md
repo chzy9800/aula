@@ -304,3 +304,33 @@ P0 的第二个交付物：`ClassView` + `ClassStore` + `Realtime` + `Vad`，把
 | **`cp -Rc`（APFS 写时复制克隆）** | **258MB / 0.65 秒**，且不额外占磁盘 → 采用 |
 
 另外 `bash` 里全角标点紧跟变量名会被吞进变量名（`set -u` 下报 unbound variable），这个坑在同一份脚本里踩了两次（`$APP_DIR（`、`$SIGN_ID）`），最后写脚本扫全仓才清干净。
+
+### 9.6 听课记录闭环
+
+`--probe-class <pcm目录> digest` 把最后一步也纳入自动验证：
+
+| 项 | 结果 |
+| --- | --- |
+| 服务端接口 | `POST /api/sessions/{id}/digest`（分块抽取 → 全局合成） |
+| 产出 | 827–958 字符 Markdown，带 YAML frontmatter |
+| 结构完整性 | title / date / source / language / tags + 摘要 + 核心要点 + 术语表 |
+| 耗时 | 3 句转写约 2–5 秒（课量大时分块更多，界面上有进度反馈） |
+
+界面：footer 的「生成听课记录」→ sheet 显示 → 复制 / 保存 `.md`。失败时说明「转写还在库里，
+修好网关再点一次」，不假装成功。
+
+### 9.7 一条工具链硬约束：不能用 SwiftUI 宏
+
+只有 Command Line Tools（没装完整 Xcode）时，`@State` / `@StateObject` / `@Bindable` 这些
+**宏**会直接编译失败：
+
+```
+error: external macro implementation type 'SwiftUIMacros.StateMacro' could not be found
+       for macro 'State()'; plugin for module 'SwiftUIMacros' not found
+```
+
+`@ObservedObject` / `@Published` / `@Environment` 是 propertyWrapper，不受影响。
+所以 sheet 的开关放在 `ClassStore` 里用 `@Published` 承载，视图只读不持有状态。
+
+这条约束决定了整个 app 的状态管理风格：**状态留在 store，视图保持无状态**——本来也是更好的
+写法，只是这里是工具链逼出来的。

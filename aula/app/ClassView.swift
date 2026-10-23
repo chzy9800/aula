@@ -19,6 +19,9 @@ struct ClassView: View {
         }
         .frame(minWidth: 700, minHeight: 480)
         .background(background)
+        .sheet(isPresented: $store.showDigestSheet) {
+            DigestSheet(store: store)
+        }
     }
 
     // MARK: - 顶栏
@@ -193,6 +196,14 @@ struct ClassView: View {
             Text("\(store.lines.count) 句")
                 .font(.system(size: 10).monospacedDigit())
                 .foregroundStyle(.tertiary)
+            if store.canMakeDigest {
+                Button("生成听课记录") {
+                    store.showDigestSheet = true
+                    store.makeDigest()
+                }
+                .controlSize(.small)
+                .help("把整节课压成带 frontmatter 的 Markdown")
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
@@ -202,6 +213,89 @@ struct ClassView: View {
         // 玻璃拟态：SwiftUI 的 material 已含 saturate，比手调 CSS 省事
         ZStack {
             Rectangle().fill(.ultraThinMaterial)
+        }
+    }
+}
+
+/// 听课记录结果窗：生成中给进度，成功后能复制或落盘。
+/// 服务端产出是带 YAML frontmatter 的 Markdown，直接扔进 Obsidian 就能用。
+struct DigestSheet: View {
+
+    @ObservedObject var store: ClassStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Text("听课记录")
+                    .font(.system(size: 14, weight: .semibold))
+                if store.digestBusy {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer()
+                if store.digest != nil {
+                    Button("复制") { copyToPasteboard() }
+                    Button("保存…") { saveToFile() }
+                }
+                Button("关闭") { store.showDigestSheet = false }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider().opacity(0.4)
+
+            content
+        }
+        .frame(width: 740, height: 560)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let digest = store.digest {
+            ScrollView {
+                Text(digest)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+        } else if let error = store.digestError {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                Text("这节课的转写仍然在库里，不会丢。修好网关后重新点一次「生成听课记录」即可。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text("正在分块抽取再全局合成，通常十几秒…")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func copyToPasteboard() {
+        guard let digest = store.digest else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(digest, forType: .string)
+    }
+
+    private func saveToFile() {
+        guard let digest = store.digest else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "听课记录.md"
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            try? digest.write(to: url, atomically: true, encoding: .utf8)
         }
     }
 }

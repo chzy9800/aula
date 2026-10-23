@@ -60,6 +60,19 @@ final class ClassStore: ObservableObject {
     @Published private(set) var asrLabel = ""
     @Published private(set) var lastError: String = ""
     @Published private(set) var elapsed: TimeInterval = 0
+    @Published private(set) var digest: String?
+    @Published private(set) var digestBusy = false
+    @Published private(set) var digestError: String?
+    /// 界面上的 sheet 开关。
+    /// 放这里而不是视图里的 `@State`：只有 Command Line Tools 时没有 SwiftUIMacros 插件，
+    /// `@State`/`@StateObject` 会直接编译失败（`plugin for module 'SwiftUIMacros' not found`）；
+    /// `@Published` 是 propertyWrapper，不需要宏。
+    @Published var showDigestSheet = false
+
+    /// 有转写、没在录音、没在生成 → 才能出听课记录
+    var canMakeDigest: Bool {
+        sessionId != nil && !lines.isEmpty && !digestBusy && phase != .listening && phase != .starting
+    }
 
     private let sidecar: Sidecar
     private let realtime = RealtimeClient()
@@ -284,12 +297,37 @@ final class ClassStore: ObservableObject {
         }
     }
 
+    // MARK: - 听课记录
+
+    /// 把整节课压成一份带 YAML frontmatter 的 Markdown。
+    /// 服务端是「分块抽取 → 全局合成」，一分钟的课也要十几秒，期间必须给可见反馈。
+    func makeDigest() {
+        guard let sessionId, !lines.isEmpty, !digestBusy else { return }
+        digestBusy = true
+        digestError = nil
+        digest = nil
+        // Sidecar.post 是同步阻塞的，不能占主线程
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = Sidecar.post(self.baseURL + "/api/sessions/\(sessionId)/digest",
+                                      payload: [:], timeout: 180)
+            DispatchQueue.main.async {
+                self.digestBusy = false
+                if let markdown = result?["markdown"] as? String, !markdown.isEmpty {
+                    self.digest = markdown
+                } else {
+                    self.digestError = "生成失败：看 sidecar 日志（多半是模型额度或网关没起）"
+                }
+            }
+        }
+    }
+
     // MARK: - 杂项
 
     /// 仅供 `--render-preview` 与自检用：灌假数据，让界面渲染出有内容的样子。
     /// 正常运行时不会调用——真实数据只能从 WS 事件流里来。
     /// `count` 给性能基准用（灌 500 条看长列表渲染）。
-    func loadDemoLines(count: Int = 3) {
+    func loadDemoLines(count: Int = 3, listening: Bool = true) {
         if count == 0 {
             // 空态：用来检查音源选择器与引导文案
             lines = []
@@ -314,15 +352,24 @@ final class ClassStore: ObservableObject {
             return Line(id: index + 1, source: item.0, target: item.1,
                         refined: index % 3 == 2, latencyMs: item.2, at: Date())
         }
-        draft = Line(id: -1,
-                     source: "El diferencial protege a las personas contra las corrientes de fuga",
-                     target: "差动开关保护人员免受泄漏电流的伤害",
-                     refined: false, latencyMs: 0, at: Date())
+        // 已结束就没有草稿行了——真实停止时 draft 也会被清空
+        draft = listening ? Line(id: -1,
+                                 source: "El diferencial protege a las personas contra las corrientes de fuga",
+                                 target: "差动开关保护人员免受泄漏电流的伤害",
+                                 refined: false, latencyMs: 0, at: Date()) : nil
         sessionTitle = "10月23日 12:30 课堂"
         asrLabel = "whisper/small"
-        statusText = "转录中 · \(count) 句 · 上句 886ms"
-        phase = .listening
-        elapsed = 754
+        if listening {
+            statusText = "转录中 · \(count) 句 · 上句 886ms"
+            phase = .listening
+            elapsed = 754
+        } else {
+            // 已结束状态：footer 里要出现「生成听课记录」
+            statusText = "已结束 · 共 \(count) 句"
+            phase = .idle
+            elapsed = 2680
+        }
+        sessionId = "demo-session-for-preview"
     }
 
     private func setPhase(_ new: Phase, _ text: String) {
