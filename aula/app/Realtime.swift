@@ -13,6 +13,8 @@ final class RealtimeClient {
         case ready(asr: String, model: String, sampleRate: Int)
         case partial(key: Int, source: String, target: String)
         case transcript(seq: Int, key: Int, source: String, target: String, latencyMs: Int)
+        /// 流式译文的增量：字幕"逐字长出来"靠它，不是整句替换
+        case translationDelta(seq: Int, delta: String)
         case translation(seq: Int, target: String)
         case status(String)
         case error(String)
@@ -87,6 +89,9 @@ final class RealtimeClient {
                              source: u["source"] as? String ?? "",
                              target: u["target"] as? String ?? "",
                              latencyMs: obj["latency_ms"] as? Int ?? 0))
+        case "translation_delta":
+            emit(.translationDelta(seq: obj["seq"] as? Int ?? 0,
+                                   delta: obj["delta"] as? String ?? ""))
         case "translation":
             emit(.translation(seq: obj["seq"] as? Int ?? 0,
                               target: obj["target"] as? String ?? ""))

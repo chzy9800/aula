@@ -8,17 +8,19 @@ import Foundation
 /// 为什么不用 venv：venv 的 `pyvenv.cfg` 记录构建机的绝对路径，搬进 .app 后解释器
 /// 找不到 home。pbs（python-build-standalone）本身是 relocatable 的，把依赖直接装进
 /// 它自己的 site-packages，整个目录搬到哪都能跑。
-final class Sidecar {
+final class Sidecar: ObservableObject {
 
     enum State: String {
         case stopped, starting, ready, stopping, failed
     }
 
-    /// 状态变化回调（主线程）。
+    /// 状态变化回调（主线程）。保留给命令行自检用——它没有 Combine 运行循环。
     var onStateChange: ((State, String) -> Void)?
 
-    private(set) var state: State = .stopped
-    private(set) var statusText: String = "未启动"
+    /// 界面要跟着服务状态刷新：启动过程有 0.5–1 秒，不订阅的话界面会一直停在
+    /// "未开始"，直到用户碰一下控件才重绘。
+    @Published private(set) var state: State = .stopped
+    @Published private(set) var statusText: String = "未启动"
     private(set) var port: Int = 0
     private(set) var lastError: String = ""
 

@@ -15,6 +15,8 @@ final class ClassStore: ObservableObject {
         var refined: Bool    // 精译已覆盖粗译
         var latencyMs: Int
         var at: Date
+        /// 译文还在流式到达——界面据此在末尾画一个光标，让人知道"还没写完"
+        var streaming: Bool = false
 
         /// 复用同一个 formatter：列表长起来后每行 new 一个是明显的浪费
         private static let timeFormatter: DateFormatter = {
@@ -53,6 +55,10 @@ final class ClassStore: ObservableObject {
 
     @Published var sourceKind: SourceKind = .microphone
     @Published private(set) var phase: Phase = .idle
+    /// 服务侧状态：与听课状态分开，服务还在起的时候界面要能自己变，
+    /// 不能等用户碰一下控件才重绘。
+    @Published private(set) var serviceStatus = "服务启动中…"
+    @Published private(set) var serviceReady = false
     @Published private(set) var lines: [Line] = []
     @Published private(set) var draft: Line?
     @Published private(set) var statusText = "未开始"
@@ -86,6 +92,7 @@ final class ClassStore: ObservableObject {
     private var sessionId: String?
     private var startedAt: Date?
     private var timer: Timer?
+    private var serviceCancellables: Set<AnyCancellable> = []
     private let draftKey = -1
     /// 诊断计数（VAD 触发次数）——只在诊断里读
     private(set) var segmentCount = 0
@@ -99,6 +106,32 @@ final class ClassStore: ObservableObject {
         self.sidecar = sidecar
         wireRealtime()
         wireVad()
+        wireService()
+    }
+
+    /// 订阅服务状态。不做这件事的症状：app 刚启动时界面停在"未开始"，
+    /// 服务其实已经就绪，但界面要等下一次交互才刷新。
+    private func wireService() {
+        sidecar.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] state in
+                guard let self else { return }
+                self.serviceReady = (state == .ready)
+                switch state {
+                case .ready:
+                    self.serviceStatus = "服务就绪 · 选好声音来源后按 ⌥⌘R 开始"
+                case .starting:
+                    self.serviceStatus = "服务启动中…"
+                case .stopping:
+                    self.serviceStatus = "服务停止中…"
+                case .failed:
+                    let reason = self.sidecar.lastError
+                    self.serviceStatus = reason.isEmpty ? "服务异常" : "服务异常：\(reason)"
+                case .stopped:
+                    self.serviceStatus = "服务未启动"
+                }
+            }
+            .store(in: &serviceCancellables)
     }
 
     // MARK: - 开始 / 停止
@@ -173,7 +206,9 @@ final class ClassStore: ObservableObject {
     /// 系统声音：ScreenCaptureKit 进程内抓混音。首次会弹屏幕录制授权。
     private func beginSystemAudio() {
         DispatchQueue.main.async { self.setPhase(.starting, "正在申请屏幕录制权限…") }
-        Task { [weak self] in
+        // 必须 @MainActor：startTimer 用 Timer.scheduledTimer，挂在没有 RunLoop 的
+        // 后台线程上永远不会触发——上一版就是这里导致"计时不动"。
+        Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 try await self.systemAudio.start()
@@ -348,14 +383,25 @@ final class ClassStore: ObservableObject {
                     self.lines[index].target = target
                 } else {
                     self.lines.append(Line(id: seq, source: source, target: target,
-                                           refined: false, latencyMs: latency, at: Date()))
+                                           refined: false, latencyMs: latency, at: Date(),
+                                           streaming: true))
                 }
                 self.setStatus("转录中 · \(self.lines.count) 句 · 上句 \(latency)ms")
+            case .translationDelta(let seq, let delta):
+                // 逐字追加：只有"增加"，没有"替换"——这是消除字幕抖动的关键
+                guard !delta.isEmpty,
+                      let index = self.lines.firstIndex(where: { $0.id == seq }) else { return }
+                self.lines[index].target += delta
+                self.lines[index].streaming = true
             case .translation(let seq, let target):
                 guard let index = self.lines.firstIndex(where: { $0.id == seq }) else { return }
-                guard !target.isEmpty, target != self.lines[index].target else { return }
-                self.lines[index].target = target
-                self.lines[index].refined = true   // UI 闪一下表示这句升级过
+                // 收尾的完整文本：与本地拼出来的一致就只关掉流式标记，
+                // 不一致说明漏接了增量，用完整文本兜底（幂等）
+                if !target.isEmpty && target != self.lines[index].target {
+                    self.lines[index].target = target
+                    self.lines[index].refined = true
+                }
+                self.lines[index].streaming = false
             case .status(let message):
                 self.setStatus(message)
             case .error(let message):

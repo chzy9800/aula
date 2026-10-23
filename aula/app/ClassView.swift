@@ -32,7 +32,7 @@ struct ClassView: View {
                 Text(store.sessionTitle.isEmpty ? "aula · 课堂到笔记" : store.sessionTitle)
                     .font(.system(size: 16, weight: .semibold))
                     .lineLimit(1)
-                Text(store.statusText)
+                Text(subtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(store.phase == .failed ? Color.red : Color.secondary)
                     .lineLimit(2)
@@ -71,6 +71,18 @@ struct ClassView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
+    }
+
+    /// 顶栏副标题：空闲时显示服务状态（它自己会变），听课时显示转写进度。
+    private var subtitle: String {
+        switch store.phase {
+        case .listening, .starting, .stopping:
+            return store.statusText
+        case .failed:
+            return store.lastError.isEmpty ? store.statusText : store.lastError
+        case .idle:
+            return store.serviceStatus
+        }
     }
 
     // MARK: - 逐句列表
@@ -129,10 +141,18 @@ struct ClassView: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(line.target.isEmpty ? "…" : line.target)
-                .font(.system(size: 15))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(line.target.isEmpty && line.streaming ? "…" : line.target)
+                    .font(.system(size: 15))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if line.streaming {
+                    // 光标表示"这句还没写完"——流式到达时比一个空格更能说明状态
+                    Text("▌")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

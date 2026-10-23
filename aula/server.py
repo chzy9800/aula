@@ -504,20 +504,50 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                 text = (result.text or "").strip()
                 if not text:
                     continue
-                rough = ""
-                if engines.fast_mt is not None:
-                    try:
-                        rough = await asyncio.to_thread(
-                            engines.fast_mt.translate, text,
-                            engines.settings.source_lang, engines.settings.target_lang,
-                        )
-                    except Exception:  # noqa: BLE001
-                        rough = ""
+                # 草稿只推原文。草稿阶段的粗译会立刻被定稿覆盖，字幕上就是
+                # "闪一下再变"——这正是要消掉的抖动。译文统一走定稿后的流式增量。
                 await _broadcast(
                     session_id,
                     {"type": "partial", "key": latest_partial["start_ms"],
-                     "source": text, "target": rough},
+                     "source": text, "target": ""},
                 )
+
+        async def stream_translate(seg_text: str, seq: int) -> str:
+            """把精译的增量逐个广播出去，返回拼好的全文。
+
+            线程模型：``translate_stream`` 是阻塞的（urllib 逐行读 SSE），跑在
+            ``to_thread`` 的工作线程里；增量用 ``call_soon_threadsafe`` 回到事件循环，
+            再由 ``_broadcast`` 发给这节课的所有连接。
+            """
+            loop = asyncio.get_running_loop()
+            queue: "asyncio.Queue[object]" = asyncio.Queue()
+            done_marker = object()
+
+            def emit(delta: str) -> None:
+                loop.call_soon_threadsafe(queue.put_nowait, delta)
+
+            def work() -> str:
+                try:
+                    return engines.translator.translate_stream(seg_text, emit)
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, done_marker)
+
+            runner = asyncio.create_task(asyncio.to_thread(work))
+            collected: list = []
+            while True:
+                item = await queue.get()
+                if item is done_marker:
+                    break
+                collected.append(item)
+                await _broadcast(
+                    session_id,
+                    {"type": "translation_delta", "seq": seq, "delta": item},
+                )
+            try:
+                return await runner
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("流式精译异常：%s", exc)
+                return "".join(collected)
 
         async def worker() -> None:
             while not stop.is_set():
@@ -541,21 +571,24 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     queue.task_done()
                     continue
 
-                # 两段接力：google_free 粗译先出（实测 0.2 秒/句），随原文一起
-                # 推送——用户"说完话 1 秒多"就能看懂大意；LLM 精译到了再覆盖。
-                fast_text = ""
-                if engines.fast_mt is not None:
+                # 有 LLM 就走流式精译：transcript 里不带译文，译文由随后的
+                # translation_delta 逐字补上——屏幕上只有"长出来"，没有"被替换"。
+                # 没有 LLM 时才退回专用翻译接口（一次性返回，无增量）。
+                uses_llm = engines.translator.enabled
+                fallback_text = ""
+                if not uses_llm and engines.fast_mt is not None:
                     try:
-                        fast_text = await asyncio.to_thread(
-                            engines.fast_mt.translate, text, engines.settings.source_lang, engines.settings.target_lang
+                        fallback_text = await asyncio.to_thread(
+                            engines.fast_mt.translate, text,
+                            engines.settings.source_lang, engines.settings.target_lang,
                         )
-                    except Exception:  # noqa: BLE001 粗译失败不值一条日志，精译会兜底
-                        fast_text = ""
+                    except Exception:  # noqa: BLE001
+                        fallback_text = ""
                 record = store.add_utterance(
                     db_path,
                     session_id,
                     source=text,
-                    target=fast_text,
+                    target=fallback_text,
                     start_ms=start_ms,
                     end_ms=end_ms,
                     confidence=result.confidence,
@@ -572,16 +605,15 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     },
                 )
 
-                if engines.translator.enabled:
-                    try:
-                        translated = await asyncio.to_thread(engines.translator.translate, text)
-                    except Exception as exc:  # noqa: BLE001
-                        # 翻译崩了不能连累原文：粗译已经随原文推出去，这里只记一笔
-                        translated = ""
-                        logger.warning("精译失败（粗译已送达）：%s", exc)
-                    if translated and translated != fast_text:
+                if uses_llm:
+                    translated = await stream_translate(text, record["seq"])
+                    if translated:
                         store.set_translation(db_path, session_id, record["seq"], translated)
-                        await _broadcast(session_id, {"type": "translation", "seq": record["seq"], "target": translated})
+                        # 收尾的完整文本：客户端漏接 delta 时用它兜底（幂等覆盖）
+                        await _broadcast(
+                            session_id,
+                            {"type": "translation", "seq": record["seq"], "target": translated},
+                        )
                 queue.task_done()
             stop.set()
 

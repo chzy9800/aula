@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .net import opener_for
 
@@ -121,6 +121,78 @@ class LLMClient:
             if attempt < self.retries:
                 time.sleep(1.5 * (attempt + 1))
         raise last_error or LLMError("未知错误")
+
+    def chat_stream(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        timeout: Optional[int] = None,
+        on_delta: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """流式对话：每个增量 token 立刻交给 ``on_delta``，返回拼好的全文。
+
+        为什么值得单独一条路径：整句翻译要等模型写完才出第一个字（实测 1.5–2.5 秒
+        用户看到的是空白），流式能把首字压到 1 秒内，而且字幕是"逐字长出来"而不是
+        "整句跳出来再被覆盖"——后者在课堂上会闪。
+
+        只取 ``delta.content``，不要 ``reasoning_content``：思考链不是译文。
+        """
+        payload: Dict[str, Any] = {
+            "model": model or self.model,
+            "messages": messages,
+            "temperature": self.temperature if temperature is None else temperature,
+            "stream": True,
+        }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if self.api_key:
+            headers["Authorization"] = "Bearer %s" % self.api_key
+
+        if self._in_cooldown():
+            raise LLMRateLimited(
+                "接口处于限流冷却期（%.0f 秒内不再重试），已切换到备用链路" % self.cooldown_seconds
+            )
+
+        request = urllib.request.Request(self.endpoint, data=body, headers=headers, method="POST")
+        collected: List[str] = []
+        try:
+            with opener_for(self.endpoint).open(request, timeout=timeout or self.timeout) as response:
+                for raw in response:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except ValueError:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    piece = (choices[0].get("delta") or {}).get("content")
+                    if piece:
+                        collected.append(piece)
+                        if on_delta is not None:
+                            on_delta(piece)
+            return "".join(collected)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+            if exc.code in (400, 401, 403, 404):
+                raise LLMError("模型接口返回 %d：%s" % (exc.code, detail)) from exc
+            if exc.code in (429, 503):
+                self._enter_cooldown()
+                raise LLMRateLimited("接口暂时不可用（%d）：%s" % (exc.code, detail)) from exc
+            raise LLMError("HTTP %d：%s" % (exc.code, detail)) from exc
+        except urllib.error.URLError as exc:
+            raise LLMError("无法连接 %s：%s" % (self.endpoint, exc.reason)) from exc
 
     def chat_json(self, messages: List[Dict[str, str]], **kwargs: Any) -> Dict[str, Any]:
         raw = self.chat(messages, **kwargs)

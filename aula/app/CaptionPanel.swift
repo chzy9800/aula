@@ -139,7 +139,8 @@ final class CaptionPanel {
         }
         for line in tail.reversed() {
             if !line.target.isEmpty {
-                stack.addArrangedSubview(label(line.target, size: 15, dim: false, bold: true))
+                let text = line.streaming ? line.target + "▌" : line.target
+                stack.addArrangedSubview(label(text, size: 15, dim: false, bold: true))
             }
             stack.addArrangedSubview(label(line.source, size: 11, dim: true))
         }

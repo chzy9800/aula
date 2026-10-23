@@ -119,6 +119,7 @@ func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
     var partials = 0
     var transcripts = 0
     var translations = 0
+    var deltas = 0
     var errors: [String] = []
     var sources: [Int: String] = [:]
     var targets: [Int: String] = [:]
@@ -135,6 +136,8 @@ func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
             transcripts += 1
             sources[seq] = source
             if !target.isEmpty { targets[seq] = target }
+        case .translationDelta:
+            deltas += 1
         case .translation(let seq, let target):
             translations += 1
             refined.insert(seq)
@@ -188,7 +191,8 @@ func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
     print("  ready: \(readyCount)")
     print("  partial(草稿，尽力而为): \(partials)")
     print("  transcript(定稿): \(transcripts)")
-    print("  translation(精译覆盖): \(translations)  覆盖 seq: \(refined.sorted())")
+    print("  translation_delta(流式增量): \(deltas)")
+    print("  translation(收尾完整): \(translations)  seq: \(refined.sorted())")
     for seq in sources.keys.sorted() {
         let src = sources[seq] ?? ""
         let tgt = targets[seq] ?? ""

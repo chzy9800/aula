@@ -44,6 +44,17 @@ class FakeLLM:
         self.translate_calls += 1
         return "中文译文"
 
+    def chat_stream(self, messages, on_delta=None, **kwargs):
+        """流式替身：分两段推，验证增量能被拼接。
+        接口加了流式以后，替身必须跟着实现——否则服务端走的是"没有流式就退回整句"那条路，
+        真正的增量推送就永远测不到。"""
+        self.translate_calls += 1
+        pieces = ["中文", "译文"]
+        for piece in pieces:
+            if on_delta is not None:
+                on_delta(piece)
+        return "".join(pieces)
+
     def chat_json(self, messages, **kwargs):
         self.summary_calls += 1
         return dict(SUMMARY_PAYLOAD)
@@ -175,10 +186,10 @@ class ApiTest(unittest.TestCase):
     # —— 实时链路 ——
 
     def test_websocket_transcribes_then_translates(self):
-        """原文先推、译文后到：用户约 1 秒就能看到听到了什么。
+        """原文先推、译文流式后到：约 1 秒看到文字，随后译文逐字长出来。
 
-        这条断言同时钉住两件事——顺序不能反（译文必须后到），以及译文
-        最终要落库（否则导出与听课记录里会是空的）。
+        这条钉住三件事——顺序不能反（译文必须后到）、增量要分多段推（攒成一条就退化成
+        整句替换）、完整译文最终要落库（否则导出与听课记录里是空的）。
         """
         sid = self.new_session()
         pcm = b"\x00\x00" * 16000  # 1 秒静音，MockASR 不关心内容
@@ -194,13 +205,20 @@ class ApiTest(unittest.TestCase):
             self.assertEqual(first["type"], "transcript")
             utterance = first["utterance"]
             self.assertTrue(utterance["source"])
-            self.assertEqual(utterance["target"], "", "原文那条不该等译文")
+            self.assertEqual(utterance["target"], "", "定稿不带译文，译文走流式增量")
             self.assertEqual(utterance["seq"], 1)
 
-            second = ws.receive_json()
-            self.assertEqual(second["type"], "translation")
-            self.assertEqual(second["seq"], 1)
-            self.assertEqual(second["target"], "中文译文")
+            deltas = []
+            message = ws.receive_json()
+            while message["type"] == "translation_delta":
+                self.assertEqual(message["seq"], 1)
+                deltas.append(message["delta"])
+                message = ws.receive_json()
+
+            self.assertGreaterEqual(len(deltas), 2, "流式要分多段推，攒成一条就退化成整句替换")
+            self.assertEqual("".join(deltas), "中文译文")
+            self.assertEqual(message["type"], "translation")
+            self.assertEqual(message["target"], "中文译文", "收尾的完整文本供漏接增量的客户端兜底")
 
         detail = self.client.get(f"/api/sessions/{sid}").json()
         self.assertEqual(len(detail["utterances"]), 1)
@@ -239,11 +257,11 @@ class ApiTest(unittest.TestCase):
         detail = self.client.get(f"/api/sessions/{sid}").json()
         self.assertEqual(len(detail["utterances"]), 1, "草稿绝不入库，只有定稿")
 
-    def test_websocket_fast_translation_then_refinement(self):
-        """快速粗译接力：粗译随原文先到，LLM 精译随后覆盖。
+    def test_websocket_partial_and_transcript_carry_no_rough_translation(self):
+        """草稿与定稿都不带粗译。
 
-        实测 LLM 精译 2.5 秒/句而 google_free 粗译 0.2 秒/句——实时课堂里
-        先看到大意再等精译，比干等 2.5 秒强得多。
+        粗译接力（0.2 秒粗译 → 2.5 秒精译覆盖）会让同一句译文在屏幕上变两三次，
+        课堂上很扎眼。现在的口径：译文只有一个来源，而且是逐字增量。
         """
         class FakeFastMT:
             def translate(self, text, source, target):
@@ -252,27 +270,51 @@ class ApiTest(unittest.TestCase):
         sid = self.new_session()
         self.app.state.engines.fast_mt = FakeFastMT()
         pcm = b"\x00\x00" * 16000
-        header = struct.pack("<II", 0, 1000)
-
+        partial_frame = struct.pack("<III", 500, 10500, 1) + pcm
+        final_frame = struct.pack("<III", 500, 11000, 0) + pcm
         try:
+            with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
+                self.assertEqual(ws.receive_json()["type"], "ready")
+                ws.send_bytes(partial_frame)
+                draft = ws.receive_json()
+                self.assertEqual(draft["type"], "partial")
+                self.assertTrue(draft["source"], "草稿仍要有原文")
+                self.assertEqual(draft["target"], "", "草稿不再带粗译")
+
+                ws.send_bytes(final_frame)
+                final = ws.receive_json()
+                self.assertEqual(final["type"], "transcript")
+                self.assertEqual(final["utterance"]["target"], "", "有 LLM 时定稿也不带粗译")
+        finally:
+            self.app.state.engines.fast_mt = None
+
+    def test_websocket_falls_back_to_mt_when_llm_translation_off(self):
+        """没有大模型时才用专用翻译接口，一次性塞进 transcript。
+
+        守的是降级链：LLM 不可用时不能连译文都没有。
+        """
+        class FakeFastMT:
+            def translate(self, text, source, target):
+                return "粗译:" + text[:6]
+
+        sid = self.new_session()
+        engines = self.app.state.engines
+        previous_mt = engines.fast_mt
+        engines.fast_mt = FakeFastMT()
+        original_enabled = engines.translator.enabled
+        engines.translator.enabled = False
+        try:
+            pcm = b"\x00\x00" * 16000
+            header = struct.pack("<II", 0, 1000)
             with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
                 self.assertEqual(ws.receive_json()["type"], "ready")
                 ws.send_bytes(header + pcm)
                 first = ws.receive_json()
                 self.assertEqual(first["type"], "transcript")
-                self.assertEqual(
-                    first["utterance"]["target"],
-                    "粗译:" + first["utterance"]["source"][:6],
-                    "粗译必须随原文一起到",
-                )
-                second = ws.receive_json()
-                self.assertEqual(second["type"], "translation")
-                self.assertEqual(second["target"], "中文译文", "LLM 精译随后覆盖粗译")
-
-            detail = self.client.get(f"/api/sessions/{sid}").json()
-            self.assertEqual(detail["utterances"][0]["target"], "中文译文", "库里留精译")
+                self.assertIn("粗译:", first["utterance"]["target"], "无 LLM 时专用接口兜底")
         finally:
-            self.app.state.engines.fast_mt = None
+            engines.fast_mt = previous_mt
+            engines.translator.enabled = original_enabled
 
     def test_websocket_broadcasts_to_same_session(self):
         """本机助手送音频、浏览器看结果：同一节课的两个连接都要收到转写。
@@ -295,6 +337,12 @@ class ApiTest(unittest.TestCase):
             model = "fake"
 
             def chat(self, messages, **kwargs):
+                return "中文译文"
+
+            def chat_stream(self, messages, on_delta=None, **kwargs):
+                for piece in ["中文", "译文"]:
+                    if on_delta is not None:
+                        on_delta(piece)
                 return "中文译文"
 
             def chat_json(self, messages, **kwargs):
@@ -339,9 +387,10 @@ class ApiTest(unittest.TestCase):
                     first = json.loads(await viewer.recv())
                     self.assertEqual(first["type"], "transcript", "浏览器必须看到助手的音频产出")
                     self.assertEqual(first["utterance"]["seq"], 1)
+                    # 译文走流式增量：这里只确认增量开始到达
                     second = json.loads(await viewer.recv())
-                    self.assertEqual(second["type"], "translation")
-                    self.assertEqual(second["target"], "中文译文")
+                    self.assertEqual(second["type"], "translation_delta")
+                    self.assertEqual(second["seq"], 1)
                     seen_by_sender = json.loads(await sender.recv())
                     self.assertEqual(seen_by_sender["type"], "transcript")
 

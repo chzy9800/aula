@@ -4,6 +4,41 @@
 
 ## [未发布]
 
+### 变更：译文改为流式逐字，取消粗译接力（消除字幕反复替换）
+
+原来的三段时间线让同一句译文在屏幕上变两三次：0.2 秒粗译到 → 0.9 秒定稿重推 → 2.5 秒
+精译覆盖。课堂上很扎眼。现在的口径：**译文只有一个来源，且逐字长出来**。
+
+- `llm.py` 新增 `chat_stream`：SSE 逐行解析，只取 `delta.content`（不要 `reasoning_content`
+  ——思考链不是译文）
+- `translate.py` 新增 `translate_stream`：把提示词与预算构造抽成 `_prepare`，两条路径共用，
+  避免漂移；client 没有流式接口时自动退回整句（自定义 client / 测试替身不受影响）
+- `server.py`：草稿与定稿都不再带译文，精译走 `translation_delta` 增量广播，末尾补一条
+  完整 `translation` 供漏接增量的客户端兜底（幂等）；没有 LLM 时才退回专用翻译接口
+- Swift 端 `translationDelta` 逐段追加，行末画一个 `▌` 表示"还没写完"
+
+实测 3 句西语 → **70 条增量**（平均每句约 23 次推进），收尾完整文本 3 条，
+译文与原文都对。
+
+`tests/test_api.py` 里三个断言旧行为的用例按新契约重写，并**补了一条**
+`test_websocket_falls_back_to_mt_when_llm_translation_off` 守住降级链（LLM 不可用时
+必须还有译文）。231 passed。
+
+### 修复：系统声音听课计时不动 / 服务启动状态不刷新
+
+两个都是界面"看着卡住"的 bug：
+
+1. **计时不动**：系统声音路径在 `Task {}` 里起 `Timer.scheduledTimer`，而 `Task` 不在主
+   线程——挂到没有 RunLoop 的线程上永远不会触发。改成 `Task { @MainActor in }`。
+   麦克风路径本来就在主线程回调里，所以只有系统声音这一档坏。
+2. **服务状态不刷新**：`ClassStore` 从来没有订阅 `Sidecar` 的状态，界面停在"未开始"，
+   要等用户碰一下控件触发重绘才更新。`Sidecar` 改成 `ObservableObject`（`state` /
+   `statusText` 为 `@Published`），`ClassStore` 订阅后映射成 `serviceStatus`，顶栏在空闲
+   时显示它。
+
+顺带把顶栏副标题按状态分开：听课时显示转写进度，空闲时显示服务状态，失败时显示原因。
+
+
 ### 新增：音频诊断——把「识别不出」拆成三种可分辨的故障
 
 用户报「系统声音识别不出」时，背后可能是三种完全不同的原因，修法互不相通：

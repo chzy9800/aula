@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import OrderedDict
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from .llm import LLMClient, LLMError
 from .mt import BaseMT, MTError
@@ -160,6 +160,33 @@ class Translator:
                     self._prev_source = text
                     return translated
 
+        system, user, budget = self._prepare(text)
+        try:
+            result = self.client.chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                model=self.model,
+                temperature=0.1,
+                max_tokens=budget,
+                timeout=timeout,
+            )
+        except LLMError as exc:
+            # 这一句只能是空的，但**必须留下原因**——静默丢句子在课堂上表现为
+            # "字幕突然少一句"，排查时无从下手。降级到粗译由上层负责。
+            logger.warning("翻译失败（本句留空）：%s", exc)
+            self._prev_source = text
+            return ""
+
+        result = _strip_noise(result)
+        self._remember(text, result)
+        harvest_terms(result, self.glossary, self.glossary_limit)
+        self._prev_source = text
+        return result
+
+    def _prepare(self, text: str) -> "tuple[str, str, int]":
+        """提示词与 token 预算。translate / translate_stream 共用一份，避免两条路径漂移。"""
         system = SYSTEM.format(
             src=LANG_NAMES.get(self.source_lang, self.source_lang),
             dst=LANG_NAMES.get(self.target_lang, self.target_lang),
@@ -188,8 +215,38 @@ class Translator:
         budget = min(800, 100 + len(text))
         if getattr(self.client, "reasoning_effort", ""):
             budget = min(1200, budget + 400)
+        return system, user, budget
+
+    def translate_stream(self, text: str, on_delta: Callable[[str], None], timeout: int = 40) -> str:
+        """流式翻译：每写完一小段就把增量交给 ``on_delta``，返回拼好的全文。
+
+        为什么另开一条：整句出来的译文在字幕上是"跳一下再被覆盖"，课堂上很扎眼；
+        流式只有一个动作——逐字长出来。代价是首字前后要等模型开始输出（约 1 秒），
+        但这段时间屏幕上已有原文，不算空白。
+
+        不走 mt（专用翻译接口）：那类接口一次性返回，没有增量可推。
+        """
+        text = (text or "").strip()
+        if not text or not self.enabled:
+            return text
+
+        cached = self.cache.get(text)
+        if cached is not None:
+            self.cache.move_to_end(text)
+            self._prev_source = text
+            on_delta(cached)          # 缓存命中也要回调，否则界面会空着
+            return cached
+
+        # 自定义 client / 测试替身可能只有整句接口：退回一次性翻译，行为不变
+        if not hasattr(self.client, "chat_stream"):
+            fallback = self.translate(text, timeout=timeout)
+            if fallback:
+                on_delta(fallback)
+            return fallback
+
+        system, user, budget = self._prepare(text)
         try:
-            result = self.client.chat(
+            result = self.client.chat_stream(
                 [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -198,15 +255,16 @@ class Translator:
                 temperature=0.1,
                 max_tokens=budget,
                 timeout=timeout,
+                on_delta=on_delta,
             )
         except LLMError as exc:
-            # 这一句只能是空的，但**必须留下原因**——静默丢句子在课堂上表现为
-            # "字幕突然少一句"，排查时无从下手。降级到粗译由上层负责。
-            logger.warning("翻译失败（本句留空）：%s", exc)
+            logger.warning("流式翻译失败（本句留空）：%s", exc)
             self._prev_source = text
             return ""
 
-        result = _strip_noise(result)
+        # 不做 _strip_noise：增量已经推给用户了，事后清洗会让存储与显示不一致。
+        # 提示词本身禁止加前缀，实测也没有。
+        result = (result or "").strip()
         self._remember(text, result)
         harvest_terms(result, self.glossary, self.glossary_limit)
         self._prev_source = text
