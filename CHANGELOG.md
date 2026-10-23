@@ -4,6 +4,32 @@
 
 ## [未发布]
 
+### 修复：Apple 引擎「还是不行」的两个真因 + 接入 Apple 本地翻译
+
+用户截图显示 AirTranslate 的 `Speech Recognition Pack` 与 `Translation Language Pack`
+**都已安装**，并说"还是不行"。加了 `--probe-apple-assets`（只查资源、不碰 TCC）测出：
+
+```
+语音识别授权: 0（未询问）
+识别 es-ES: unauthorized
+翻译 es → zh-Hans: 可用      ← 语言包确实在
+```
+
+**真因一：授权从来没被请求过。** `AppleSpeech.start` 只检查 `authorizationStatus`，
+状态是 `.notDetermined` 时直接返回"未授权"——系统弹窗根本没机会出现。用户看到的是
+一句错误，不是授权框。修：`.notDetermined` 时先主动 `requestAuthorization()`。
+
+**真因二：喂给识别器的音频格式错了。** 我传的是 Int16 交错 buffer，而
+`SFSpeechAudioBufferRecognitionRequest` 只吃 **Float32 非交错标准格式**。格式不对
+**不会报错**，只是永远识别不出东西——比报错更难查。修：转 Float32。
+
+**新接入 Apple 本地翻译**（`AppleTranslator.swift`）：
+`TranslationSession` 只能从 SwiftUI 的 `.translationTask` 拿到，所以用一个 1×1
+隐藏窗口承载空视图触发它，把 session 递出来复用。设置里可切：
+`服务端（LLM/MT）` / `Apple 本地`。本地翻译无网络、无额度、延迟低，与 AirTranslate 一致。
+
+探针实测：`es → zh-Hans` / `en → zh-Hans` / `es → en` 三对全部「可用」。
+
 ### 新增：Apple 原生语音识别引擎（可选）
 
 用户指出「AirTranslate 快是因为它用系统框架 + 预下载语言包」，要求接 Apple 方案。

@@ -104,7 +104,28 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// 翻译引擎。Apple 本地（TranslationSession，语言包已装即用）/ 服务端（LLM 或 MT）
+    enum TranslationEngine: String, CaseIterable, Identifiable {
+        case server, apple
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .server: return "服务端（LLM/MT）"
+            case .apple: return "Apple 本地"
+            }
+        }
+        var note: String {
+            switch self {
+            case .server:
+                return "走服务端翻译，术语与上下文更好；需要网络与 API 额度。"
+            case .apple:
+                return "系统本地翻译，无网络、无额度、延迟低。需要已安装「西班牙语 → 简体中文」翻译语言包（AirTranslate 装过就现成）。"
+            }
+        }
+    }
+
     @Published var engineKind: EngineKind { didSet { persist() } }
+    @Published var translationEngine: TranslationEngine { didSet { persist() } }
     @Published var outputMode: OutputMode { didSet { persist() } }
     @Published var transcriptionSpeed: TranscriptionSpeed { didSet { persist() } }
     @Published var translationPriority: TranslationPriority { didSet { persist() } }
@@ -132,6 +153,7 @@ final class AppSettings: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         engineKind = EngineKind(rawValue: defaults.string(forKey: Self.prefix + "engine") ?? "") ?? .whisper
+        translationEngine = TranslationEngine(rawValue: defaults.string(forKey: Self.prefix + "transEngine") ?? "") ?? .server
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
         translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality
         transcriptionSpeed = TranscriptionSpeed(rawValue: defaults.string(forKey: Self.prefix + "asrSpeed") ?? "") ?? .balanced
@@ -150,6 +172,7 @@ final class AppSettings: ObservableObject {
     private func persist() {
         let defaults = UserDefaults.standard
         defaults.set(engineKind.rawValue, forKey: Self.prefix + "engine")
+        defaults.set(translationEngine.rawValue, forKey: Self.prefix + "transEngine")
         defaults.set(outputMode.rawValue, forKey: Self.prefix + "outputMode")
         defaults.set(translationPriority.rawValue, forKey: Self.prefix + "transPriority")
         defaults.set(transcriptionSpeed.rawValue, forKey: Self.prefix + "asrSpeed")

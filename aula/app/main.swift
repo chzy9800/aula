@@ -425,6 +425,37 @@ func runRenderSettings(_ outputPath: String, category: String, lang: String = "z
     return 0
 }
 
+/// 只查语言包状态，不碰 TCC（不需要授权，不会崩）
+func runAppleAssetsProbe() -> Int32 {
+    _ = NSApplication.shared
+    setbuf(stdout, nil)
+    print("--- Apple 语言资源 ---")
+    print("语音识别授权: \(AppleSpeech.authorizationStatus().rawValue)  (3=authorized, 0=未询问)")
+    for code in ["es-ES", "en-US", "zh-CN"] {
+        print("识别 \(code): \(AppleSpeech.availability(locale: code))")
+    }
+    if #available(macOS 15.0, *) {
+        let pairs = [("es", "zh-Hans"), ("en", "zh-Hans"), ("es", "en")]
+        for pair in pairs {
+            let sem = DispatchSemaphore(value: 0)
+            var ok = false
+            Task {
+                ok = await AppleTranslator.availability(source: pair.0, target: pair.1)
+                sem.signal()
+            }
+            while sem.wait(timeout: .now()) == .timedOut {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            print("翻译 \(pair.0) → \(pair.1): \(ok ? "可用" : "需要下载语言包")")
+        }
+    } else {
+        print("翻译: 系统低于 macOS 15，不支持")
+    }
+    print("PROBE OK")
+    return 0
+}
+
+
 /// Apple 语音识别自检：授权 → 语言包可用性 → 识别样例
 func runAppleSpeechProbe(_ wavPath: String) -> Int32 {
     // 语音识别走 TCC，需要 NSApplication 已初始化；否则进程直接 abort
@@ -611,6 +642,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 语音识别自检必须在 NSApp 事件循环里跑：TCC 弹窗要靠它显示，
         // 在 run() 之前调用会让进程直接 abort（踩过 exit 134）
         let launchArgs = ProcessInfo.processInfo.arguments
+        if launchArgs.contains("--probe-apple-assets") {
+            exit(runAppleAssetsProbe())
+        }
+        if launchArgs.contains("--probe-apple-assets") {
+            exit(runAppleAssetsProbe())
+        }
         if let index = launchArgs.firstIndex(of: "--probe-apple-speech") {
             let path = launchArgs.count > index + 1 ? launchArgs[index + 1] : "/tmp/aula-probe/s1.wav"
             let code = runAppleSpeechProbe(path)

@@ -98,6 +98,9 @@ final class ClassStore: ObservableObject {
     private let realtime = RealtimeClient()
     /// Apple 语音识别（可选引擎）。它不需要 VAD 切句，框架自己分段。
     private let appleSpeech = AppleSpeech()
+    /// Apple 本地翻译（macOS 15+）。懒加载：老系统上不该因为引用它就崩。
+    @available(macOS 15.0, *)
+    private lazy var appleTranslator = AppleTranslator()
     private var appleSessionId: String?
     private var appleSeq = 0
     /// 段落静音阈值可调，所以 VAD 要能按当前设置重建
@@ -316,6 +319,9 @@ final class ClassStore: ObservableObject {
         }
 
         ensureAppleSession()
+        if #available(macOS 15.0, *), settings.translationEngine == .apple {
+            appleTranslator.activate(source: "es", target: "zh-Hans")
+        }
         if let failure = appleSpeech.start(locale: "es-ES") {
             setPhase(.failed, failure)
             return
@@ -334,8 +340,34 @@ final class ClassStore: ObservableObject {
         draft = nil
         lines.append(Line(id: seq, source: text, target: "",
                           refined: false, latencyMs: 0, at: Date(), streaming: true))
-        guard let sid = appleSessionId else { return }
+        let sid = appleSessionId
 
+        // 本地翻译：无网络、无额度，延迟最低（AirTranslate 的做法）
+        if settings.translationEngine == .apple, #available(macOS 15.0, *) {
+            appleTranslator.translate(text) { [weak self] translated in
+                guard let self else { return }
+                guard let index = self.lines.firstIndex(where: { $0.id == seq }) else { return }
+                if let translated, !translated.isEmpty {
+                    self.lines[index].target = translated
+                    self.lines[index].refined = true
+                    self.speech.speak(translated, settings: self.settings)
+                }
+                self.lines[index].streaming = false
+                // 入库（服务端只存不再翻）
+                if let sid {
+                    let url = self.baseURL + "/api/sessions/\(sid)/utterance"
+                    let payload: [String: Any] = ["source": text,
+                                                  "target": translated ?? ""]
+                    DispatchQueue.global(qos: .utility).async {
+                        _ = Sidecar.post(url, payload: payload, timeout: 20)
+                    }
+                }
+            }
+            return
+        }
+
+        // 服务端翻译
+        guard let sid else { return }
         let url = baseURL + "/api/sessions/\(sid)/utterance"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Sidecar.post(url, payload: ["source": text, "translate": true], timeout: 40)
@@ -433,6 +465,9 @@ final class ClassStore: ObservableObject {
 
     private func teardownCapture() {
         appleSpeech.stop()
+        if #available(macOS 15.0, *) {
+            appleTranslator.deactivate()
+        }
         timer?.invalidate()
         timer = nil
         if engine.isRunning { engine.stop() }

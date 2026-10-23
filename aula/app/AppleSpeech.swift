@@ -63,8 +63,15 @@ final class AppleSpeech {
     func start(locale: String) -> String? {
         self.locale = locale
         lastPartial = ""
+
+        // 关键：状态是「未询问」时必须主动请求，否则用户永远看不到授权弹窗，
+        // 只会收到一句"未授权"——这正是上一版"还是不行"的真正原因。
+        if SFSpeechRecognizer.authorizationStatus() == .notDetermined {
+            _ = AppleSpeech.requestAuthorization()
+        }
         guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
-            return "语音识别未授权：系统设置 → 隐私与安全性 → 语音识别，勾上 aula"
+            let status = SFSpeechRecognizer.authorizationStatus().rawValue
+            return "语音识别未授权（状态 \(status)）：系统设置 → 隐私与安全性 → 语音识别，勾上 aula 后重启 app"
         }
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)) else {
             return "本机不支持 \(locale) 的语音识别"
@@ -106,22 +113,23 @@ final class AppleSpeech {
         return nil
     }
 
-    /// 喂 16kHz 单声道 Int16 PCM。内部转成 AVAudioPCMBuffer 交给识别器。
+    /// 喂 16kHz 单声道 Int16 PCM。
+    ///
+    /// **必须转成 Float32 非交错标准格式**：`SFSpeechAudioBufferRecognitionRequest`
+    /// 只吃标准格式，塞 Int16 buffer 不会报错，但识别结果永远是空——这个坑很隐蔽
+    /// （表面"没反应"，实际是格式不对）。
     func feed(int16 samples: [Int16]) {
         guard let request, !samples.isEmpty else { return }
-        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16,
-                                         sampleRate: 16000,
-                                         channels: 1,
-                                         interleaved: true),
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1),
               let buffer = AVAudioPCMBuffer(pcmFormat: format,
-                                            frameCapacity: AVAudioFrameCount(samples.count)) else {
+                                            frameCapacity: AVAudioFrameCount(samples.count)),
+              let channel = buffer.floatChannelData?[0] else {
             return
         }
         buffer.frameLength = AVAudioFrameCount(samples.count)
-        if let channel = buffer.int16ChannelData?[0] {
-            samples.withUnsafeBufferPointer { source in
-                channel.update(from: source.baseAddress!, count: samples.count)
-            }
+        let scale: Float = 1.0 / 32768.0
+        for index in 0..<samples.count {
+            channel[index] = Float(samples[index]) * scale
         }
         request.append(buffer)
     }
