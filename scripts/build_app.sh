@@ -124,7 +124,8 @@ swiftc -O -swift-version 5 -parse-as-library \
   "$ROOT/aula/app/SettingsView.swift" \
   "$ROOT/aula/app/TranscriptLibrary.swift" \
   "$ROOT/aula/app/L10n.swift" \
-  "$ROOT/aula/app/MenuBarPanel.swift"
+  "$ROOT/aula/app/MenuBarPanel.swift" \
+  "$ROOT/aula/app/AppleSpeech.swift"
 
 echo "⑥ 组装 bundle…"
 # 不用 rm -rf 清旧包：一是安全闸门会拦（4000+ 文件），二是留一份旧版能回滚。
@@ -164,6 +165,14 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>13.0</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>aula 需要麦克风把课堂上老师说的话转写成文字并翻译。</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>aula 用系统语音识别把课堂音频转成字幕（可选引擎，默认使用本地 whisper）。</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>aula 抓取系统播放的声音，用于给网课生成实时双语字幕。</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>aula 用系统语音识别把课堂音频转成字幕（可选引擎，默认使用本地 whisper）。</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>aula 抓取系统播放的声音，用于给网课生成实时双语字幕。</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSSupportsAutomaticTermination</key>

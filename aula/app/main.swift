@@ -425,6 +425,34 @@ func runRenderSettings(_ outputPath: String, category: String, lang: String = "z
     return 0
 }
 
+/// Apple 语音识别自检：授权 → 语言包可用性 → 识别样例
+func runAppleSpeechProbe(_ wavPath: String) -> Int32 {
+    // 语音识别走 TCC，需要 NSApplication 已初始化；否则进程直接 abort
+    _ = NSApplication.shared
+    setbuf(stdout, nil)
+    print("--- Apple 语音识别 ---")
+    print("授权状态: \(AppleSpeech.authorizationStatus().rawValue)  (3=authorized)")
+    if AppleSpeech.authorizationStatus() != .authorized {
+        print("正在请求授权（首次会弹系统窗口）…")
+        print("结果: \(AppleSpeech.requestAuthorization())")
+    }
+    for code in ["es-ES", "en-US", "zh-CN"] {
+        print("\(code): \(AppleSpeech.availability(locale: code))")
+    }
+    guard FileManager.default.fileExists(atPath: wavPath) else {
+        print("样例不存在: \(wavPath)")
+        return 1
+    }
+    guard let result = AppleSpeech.transcribeFile(path: wavPath, locale: "es-ES") else {
+        print("识别失败：语言包可能未下载（设置 → 通用 → 语言与地区 里添加西语会触发下载）")
+        return 1
+    }
+    print(String(format: "首字 %.2fs · 总 %.2fs", result.firstPartial, result.total))
+    print("文本: \(result.text)")
+    print("PROBE OK")
+    return 0
+}
+
 /// 全局快捷键自检：注册 → 报告 → 注销。
 /// 真正的按键无法自动按，但「能不能注册」是这条链路唯一的失败点
 /// （键位被别的应用占用时会返回 OSStatus），验证它就有意义。
@@ -580,6 +608,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 语音识别自检必须在 NSApp 事件循环里跑：TCC 弹窗要靠它显示，
+        // 在 run() 之前调用会让进程直接 abort（踩过 exit 134）
+        let launchArgs = ProcessInfo.processInfo.arguments
+        if let index = launchArgs.firstIndex(of: "--probe-apple-speech") {
+            let path = launchArgs.count > index + 1 ? launchArgs[index + 1] : "/tmp/aula-probe/s1.wav"
+            let code = runAppleSpeechProbe(path)
+            exit(code)
+        }
         installSignalHandlers()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "waveform.badge.magnifyingglass",

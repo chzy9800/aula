@@ -182,6 +182,18 @@ struct SettingsView: View {
 
     private var transcriptionPage: some View {
         Group {
+            settingRow("识别引擎") {
+                Picker("", selection: $settings.engineKind) {
+                    ForEach(AppSettings.EngineKind.allCases) { kind in
+                        Text(kind.label).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 260)
+            }
+            hint(settings.engineKind.note)
+            divider
             settingRow("转写速度") {
                 Picker("", selection: $settings.transcriptionSpeed) {
                     ForEach(AppSettings.TranscriptionSpeed.allCases) { speed in

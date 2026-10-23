@@ -96,6 +96,10 @@ final class ClassStore: ObservableObject {
     let style: CaptionStyle
     let speech: SpeechOutput
     private let realtime = RealtimeClient()
+    /// Apple 语音识别（可选引擎）。它不需要 VAD 切句，框架自己分段。
+    private let appleSpeech = AppleSpeech()
+    private var appleSessionId: String?
+    private var appleSeq = 0
     /// 段落静音阈值可调，所以 VAD 要能按当前设置重建
     private var vad: VadSegmenter
     private let engine = AVAudioEngine()
@@ -164,6 +168,10 @@ final class ClassStore: ObservableObject {
     // MARK: - 开始 / 停止
 
     func start() {
+        if settings.engineKind == .apple {
+            beginAppleMode()
+            return
+        }
         // 每次开始都按当前设置重建：用户可能刚改过段落静音阈值
         vad = VadSegmenter(silenceMs: settings.paragraphSilenceMs,
                            minSpeechMs: settings.minSpeechMs,
@@ -289,6 +297,76 @@ final class ClassStore: ObservableObject {
         setPhase(.listening, "正在听课（麦克风）· \(sessionTitle)")
     }
 
+    /// Apple 语音引擎：识别在本地流式完成，文本送服务端翻译并入库。
+    /// 好处是首字快（框架自带分段，不用等静音），代价是需要语音识别授权与语言包。
+    private func beginAppleMode() {
+        DispatchQueue.main.async { self.setPhase(.starting, "正在启动 Apple 语音识别…") }
+        appleSeq = 0
+        appleSpeech.onPartial = { [weak self] text in
+            guard let self else { return }
+            self.draft = Line(id: self.draftKey, source: text, target: "",
+                              refined: false, latencyMs: 0, at: Date(), streaming: true)
+        }
+        appleSpeech.onFinal = { [weak self] text in
+            self?.commitAppleLine(text)
+        }
+        appleSpeech.onError = { [weak self] message in
+            guard let self, self.phase == .listening || self.phase == .starting else { return }
+            self.setPhase(.failed, message)
+        }
+
+        ensureAppleSession()
+        if let failure = appleSpeech.start(locale: "es-ES") {
+            setPhase(.failed, failure)
+            return
+        }
+        startedAt = Date()
+        startTimer()
+        setPhase(.listening, "正在听课（Apple 语音）· \(sessionTitle)")
+        beginCapture()
+    }
+
+    /// Apple 识别出的一句：先上屏原文，再异步补译文
+    private func commitAppleLine(_ text: String) {
+        guard !text.isEmpty else { return }
+        appleSeq += 1
+        let seq = appleSeq
+        draft = nil
+        lines.append(Line(id: seq, source: text, target: "",
+                          refined: false, latencyMs: 0, at: Date(), streaming: true))
+        guard let sid = appleSessionId else { return }
+
+        let url = baseURL + "/api/sessions/\(sid)/utterance"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Sidecar.post(url, payload: ["source": text, "translate": true], timeout: 40)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let index = self.lines.firstIndex(where: { $0.id == seq }) else { return }
+                if let target = result?["target"] as? String, !target.isEmpty {
+                    self.lines[index].target = target
+                    self.lines[index].refined = true
+                    self.speech.speak(target, settings: self.settings)
+                }
+                self.lines[index].streaming = false
+            }
+        }
+    }
+
+    /// Apple 模式也需要一节课来落库：纯 HTTP 建，不走 WebSocket
+    private func ensureAppleSession() {
+        guard appleSessionId == nil else { return }
+        let title = Self.defaultTitle()
+        guard let session = Sidecar.post(baseURL + "/api/sessions", payload: ["title": title]),
+              let sid = session["id"] as? String else {
+            setPhase(.failed, "建课堂失败：服务端没有响应。看「打开服务日志」")
+            return
+        }
+        appleSessionId = sid
+        Self.lastSessionId = sid
+        sessionTitle = title
+        lines = []
+    }
+
     /// 系统声音：ScreenCaptureKit 进程内抓混音。首次会弹屏幕录制授权。
     private func beginSystemAudio() {
         DispatchQueue.main.async { self.setPhase(.starting, "正在申请屏幕录制权限…") }
@@ -332,7 +410,11 @@ final class ClassStore: ObservableObject {
         if micChunks % 40 == 0 {
             AppLog.write("mic: chunks=\(micChunks) peak=\(micPeak) srcRate=\(Int(buffer.format.sampleRate))")
         }
-        vad.feed(samples: chunk)
+        if settings.engineKind == .apple {
+            appleSpeech.feed(int16: chunk)
+        } else {
+            vad.feed(samples: chunk)
+        }
     }
 
     func stop() {
@@ -350,6 +432,7 @@ final class ClassStore: ObservableObject {
     }
 
     private func teardownCapture() {
+        appleSpeech.stop()
         timer?.invalidate()
         timer = nil
         if engine.isRunning { engine.stop() }
@@ -378,7 +461,12 @@ final class ClassStore: ObservableObject {
         }
         // 系统声音与麦克风走同一个 VAD，切句口径一致
         systemAudio.onSamples = { [weak self] samples in
-            self?.vad.feed(samples: samples)
+            guard let self else { return }
+            if self.settings.engineKind == .apple {
+                self.appleSpeech.feed(int16: samples)
+            } else {
+                self.vad.feed(samples: samples)
+            }
         }
         systemAudio.onFailure = { [weak self] message in
             guard let self, self.phase == .listening || self.phase == .starting else { return }

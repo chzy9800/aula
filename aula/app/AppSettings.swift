@@ -83,6 +83,28 @@ final class AppSettings: ObservableObject {
     /// 界面语言。目前覆盖设置界面与主要按钮，主界面运行时文案仍是中文。
     @Published var uiLanguage: L10n.Lang { didSet { persist() } }
 
+    /// 识别引擎。Apple 用系统框架（框架自带流式分段，首字约 0.3s）；
+    /// whisper 用本地模型（更准，但要等 VAD 切句 + 推理）。
+    enum EngineKind: String, CaseIterable, Identifiable {
+        case whisper, apple
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .whisper: return "whisper（准）"
+            case .apple: return "Apple 语音（快）"
+            }
+        }
+        var note: String {
+            switch self {
+            case .whisper:
+                return "本地 whisper，精度最好；等静音切句后整句识别。"
+            case .apple:
+                return "系统语音识别，边说边出字（首字约 0.3 秒）。需要首次授权并下载西语语言包；精度略低于 whisper。"
+            }
+        }
+    }
+
+    @Published var engineKind: EngineKind { didSet { persist() } }
     @Published var outputMode: OutputMode { didSet { persist() } }
     @Published var transcriptionSpeed: TranscriptionSpeed { didSet { persist() } }
     @Published var translationPriority: TranslationPriority { didSet { persist() } }
@@ -109,6 +131,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        engineKind = EngineKind(rawValue: defaults.string(forKey: Self.prefix + "engine") ?? "") ?? .whisper
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
         translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality
         transcriptionSpeed = TranscriptionSpeed(rawValue: defaults.string(forKey: Self.prefix + "asrSpeed") ?? "") ?? .balanced
@@ -126,6 +149,7 @@ final class AppSettings: ObservableObject {
 
     private func persist() {
         let defaults = UserDefaults.standard
+        defaults.set(engineKind.rawValue, forKey: Self.prefix + "engine")
         defaults.set(outputMode.rawValue, forKey: Self.prefix + "outputMode")
         defaults.set(translationPriority.rawValue, forKey: Self.prefix + "transPriority")
         defaults.set(transcriptionSpeed.rawValue, forKey: Self.prefix + "asrSpeed")

@@ -227,15 +227,30 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
 
     @app.post("/api/sessions/{session_id}/utterance")
     async def add_utterance(session_id: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        """手工补录一句话。用于：麦克风不可用、课后补记、自动化测试。"""
+        """补录一句话。用于：麦克风不可用、课后补记、自动化测试。
+
+        ``translate=true`` 时顺带翻译——Apple 语音识别引擎走这条路：识别在客户端
+        完成（框架自带流式），文本送到这里翻译并入库，不需要再传一遍 PCM。
+        """
         db_path = engines.settings.db_path()
         if store.get_session(db_path, session_id) is None:
             raise HTTPException(status_code=404, detail="会话不存在")
+
+        source = str(payload.get("source") or "").strip()
+        target = str(payload.get("target") or "").strip()
+        if not target and source and bool(payload.get("translate", False)):
+            if engines.translator.enabled:
+                try:
+                    target = await asyncio.to_thread(engines.translator.translate, source)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("补录翻译失败（原文保留）：%s", exc)
+                    target = ""
+
         return store.add_utterance(
             db_path,
             session_id,
-            source=str(payload.get("source") or ""),
-            target=str(payload.get("target") or ""),
+            source=source,
+            target=target,
             start_ms=int(payload.get("start_ms") or 0),
             end_ms=int(payload.get("end_ms") or 0),
         )

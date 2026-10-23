@@ -4,6 +4,42 @@
 
 ## [未发布]
 
+### 新增：Apple 原生语音识别引擎（可选）
+
+用户指出「AirTranslate 快是因为它用系统框架 + 预下载语言包」，要求接 Apple 方案。
+
+**差距的真实来源**（这轮终于定位清楚）：Apple Speech 的识别器**框架自带流式分段**，
+边说边出候选词，首字约 0.3 秒；我们等 VAD 静音 550ms 切句再跑 whisper，首字约 0.8 秒
+起步。这不是参数能调平的，是架构差异。
+
+`AppleSpeech.swift`：
+- `SFSpeechAudioBufferRecognitionRequest` + `requiresOnDeviceRecognition`（离线，内容不出机器）
+- 16kHz Int16 PCM 直接转 `AVAudioPCMBuffer` 喂进去，与现有音频管线同格式
+- `onPartial` 更新草稿行、`onFinal` 定稿后走服务端翻译
+- 引擎在设置里可切：`whisper（准）` / `Apple 语音（快）`
+
+**服务端**：`POST /api/sessions/{id}/utterance` 加 `translate=true`——识别在客户端完成，
+文本送这里翻译并入库，不用再传一遍 PCM。
+
+**三个踩过的坑（都花了时间）**：
+1. `SFSpeechRecognizer` 在纯 CLI 进程里**直接 abort**——必须有 app bundle 的 Info.plist
+2. `requestAuthorization` 用信号量阻塞主线程会 abort（exit 134）——TCC 弹窗要靠主线程
+   事件循环显示，必须跑 `RunLoop`
+3. 自检必须在 `applicationDidFinishLaunching` 里跑（NSApp.run 之后），
+   在 `main` 的参数解析里跑同样 abort
+4. 最后查明真正的 abort 原因：崩溃日志 `namespace: TCC` 明确写着
+   **Info.plist 缺 `NSSpeechRecognitionUsageDescription`**——顺手把
+   `NSAudioCaptureUsageDescription` 也补了
+
+**如实说明**：Apple 识别的首次授权需要真实 GUI 会话（双击 app），我这个执行环境里
+`tccutil` 被沙箱挡住、探针每次都 abort，**所以这条链路我只验证到编译与错误提示，
+没能验证真实识别**。需要你双击 app、设置里切到「Apple 语音（快）」、点开始，
+首次会弹语音识别授权 + 可能提示下载西语语言包。
+
+Apple Translation（`TranslationSession`）暂未接：它只能从 SwiftUI 的 `.translationTask`
+获得，AppKit 里要包一层隐藏视图桥接，且同样依赖语言包与 GUI 验证。翻译侧现在已有
+`speed` 档（专用 MT 0.13s），收益不如识别侧明显，先不冒这个险。
+
 ### 新增：菜单栏弹出面板 + 转录库视觉统一
 
 **菜单栏面板**（`MenuBarPanel.swift`，对应 AirTranslate 的 `MenuBarPanelController`）：
