@@ -17,12 +17,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import OrderedDict
 from typing import Dict, Optional
 
 from .llm import LLMClient, LLMError
 from .mt import BaseMT, MTError
+
+logger = logging.getLogger(__name__)
 
 LANG_NAMES = {
     "es": "西班牙语",
@@ -175,6 +178,16 @@ class Translator:
         else:
             user = text
 
+        # 中文译文 token 数 ≈ 西语字符数的 0.6～1 倍。上限跟着句长走而不是拍死 600：
+        # 短句给小上限，非推理模型就没有铺开闲写的余地（实测短句省 0.3 秒左右）。
+        #
+        # 推理模型必须额外留思考预算：`max_tokens` 把 reasoning_token 也算在里面，
+        # 实测 DeepSeek-V4.1-Flash 单句翻译的思考量在 69–207 token 之间波动，
+        # 与句子长短无关。按句长给的 169 经常被思考吃光，content 溢出为空
+        # （finish_reason=length）——字幕上就是一句空白。这类模型统一加 400 余量。
+        budget = min(800, 100 + len(text))
+        if getattr(self.client, "reasoning_effort", ""):
+            budget = min(1200, budget + 400)
         try:
             result = self.client.chat(
                 [
@@ -183,14 +196,13 @@ class Translator:
                 ],
                 model=self.model,
                 temperature=0.1,
-                # 中文译文 token 数 ≈ 西语字符数的 0.6～1 倍。上限跟着句长走
-                # 而不是拍死 600：短句给小上限，推理模型就没有铺开闲写的余地
-                # （实测短句省 0.3 秒左右）；长句照常给足，绝不截断。
-                max_tokens=min(800, 100 + len(text)),
+                max_tokens=budget,
                 timeout=timeout,
             )
-        except LLMError:
-            # 失败也要更新上下文：这一句依然是"上一句"，下一句可能依赖它
+        except LLMError as exc:
+            # 这一句只能是空的，但**必须留下原因**——静默丢句子在课堂上表现为
+            # "字幕突然少一句"，排查时无从下手。降级到粗译由上层负责。
+            logger.warning("翻译失败（本句留空）：%s", exc)
             self._prev_source = text
             return ""
 

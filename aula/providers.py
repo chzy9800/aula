@@ -97,6 +97,22 @@ PROVIDERS: Tuple[Provider, ...] = (
         reasoning_effort="low",
     ),
     Provider(
+        id="deepseek",
+        label="DeepSeek（官方 API）",
+        kind="chat",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-flash",
+        key_env="DEEPSEEK_API_KEY",
+        key_url="https://platform.deepseek.com/api_keys",
+        alt_models=("deepseek-flash", "deepseek-v4-pro"),
+        context="约 100 万 token",
+        limits="按 token 计费，无长期免费层；low 档单句翻译实测 1.4–4.2 秒（中位 2.2 秒）",
+        free_note="V4.1-Flash 快且支持 low/high/max 思考档，预设走 low 保实时性；"
+                  "V4-Pro 更强但慢一倍（约 3.9 秒/句），不建议做逐句翻译",
+        docs="https://api-docs.deepseek.com",
+        reasoning_effort="low",
+    ),
+    Provider(
         id="gemini",
         label="Google Gemini（AI Studio）",
         kind="both",

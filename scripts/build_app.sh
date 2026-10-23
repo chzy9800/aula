@@ -23,9 +23,44 @@ BUNDLE_ID="com.chzy.aula"
 PBS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-aarch64-apple-darwin-install_only.tar.gz"
 PBS_TAR="$CACHE/pbs-cp313-arm64.tar.gz"
 WANT_PROBE=0
-[ "${1:-}" = "--probe" ] && WANT_PROBE=1
+WANT_SYNC_CODE=0
+case "${1:-}" in
+  --probe) WANT_PROBE=1 ;;
+  --sync-code) WANT_SYNC_CODE=1 ;;
+esac
 
 mkdir -p "$BUILD" "$CACHE"
+
+# 只同步 Python 源码到已装好的 app（改完后端代码不用等整套构建）。
+# 存在的理由很实在：app 跑的是 bundle 里的副本，改完仓库源码不重新构建，
+# 你测的还是旧代码——我为此白排查过一次"翻译为什么还是空"。
+if [ "$WANT_SYNC_CODE" = "1" ]; then
+  if [ ! -d "$APP_DIR/Contents/Resources/lib/aula" ]; then
+    echo "✘ $APP_DIR 还没装过，先跑一次完整构建"
+    exit 1
+  fi
+  echo "① 同步 Python 源码…"
+  rm -rf "$APP_DIR/Contents/Resources/lib/aula"
+  cp -Rc "$ROOT/aula" "$APP_DIR/Contents/Resources/lib/aula"
+  rm -rf "$APP_DIR/Contents/Resources/lib/aula/app" \
+         "$APP_DIR/Contents/Resources/lib/aula/menubar" \
+         "$APP_DIR/Contents/Resources/lib/aula/__pycache__"
+  echo "② 重签…"
+  SIGN_ID="${AULA_SIGN_IDENTITY:-}"
+  if [ -z "$SIGN_ID" ]; then
+    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
+      | sed -n 's/.*"\(aula[^"]*\)".*/\1/p' | head -1)
+  fi
+  if [ -n "$SIGN_ID" ]; then
+    codesign --force -s "$SIGN_ID" "$APP_DIR" 2>/dev/null
+    echo "   已用 ${SIGN_ID} 重签"
+  else
+    codesign --force --deep -s - "$APP_DIR" 2>/dev/null
+    echo "   ⚠️ ad-hoc 重签（TCC 权限会丢，建议先跑 make_sign_cert.sh）"
+  fi
+  echo "✔ 源码已同步（运行时未动）"
+  exit 0
+fi
 
 echo "① Python 运行时（pbs，relocatable）…"
 mkdir -p "$RUNTIME"

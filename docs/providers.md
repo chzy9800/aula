@@ -21,6 +21,7 @@ aula providers --json       # 给脚本用
 | `gemini` | `gemini-3.8-flash` | 对话 + 转写 | 约 100 万 token | 约 10–15 RPM / 250–1500 RPD（按模型与地区调整） | 需要 `GEMINI_API_KEY`，无需信用卡 |
 | `groq` | `llama-3.3-70b-versatile` | 对话 + 转写 | 约 128K | 约 30 RPM / 1000 RPD / 1.2 万 TPM（按模型） | 需要 `GROQ_API_KEY`，无需信用卡 |
 | `openrouter` | `deepseek/deepseek-chat-v3.1:free` | 对话 | 视模型，约 32K–128K | 免费模型约 20 RPM；每日 50 次（余额 <10 美元）或 1000 次 | 需要 `OPENROUTER_API_KEY` |
+| `deepseek` | `deepseek-flash`（V4.1-Flash） | 对话 | 约 100 万 token | 按 token 计费，无长期免费层 | 需要 `DEEPSEEK_API_KEY` |
 | `cerebras` | `llama3.3-70b` | 对话 | 约 32K–128K | 约 30 RPM / 100 万 token 每天 | 需要 `CEREBRAS_API_KEY` |
 | `mistral` | `mistral-small-latest` | 对话 + 转写 | 约 128K | 实验层约 1 请求/秒、50 万 TPM、每月 10 亿 token | 需要 `MISTRAL_API_KEY`（手机验证） |
 | `zhipu` | `glm-4-flash` | 对话 | 约 128K | Flash 系列免费；限制并发（约 5–20）与 RPM | 需要 `ZHIPU_API_KEY` |
@@ -346,3 +347,54 @@ Provider(
 
 要求：必须兼容 `POST {base_url}/chat/completions`（OpenAI 协议）。不兼容的服务需要自己写
 适配层——现有的 `asr.py` 里 `GeminiASR` 就是这种"非标准协议"的例子。
+
+## 八、DeepSeek 官方 API 实测（2026-10-23）
+
+用 `aula.translate.Translator` 的真实路径测（完整提示词 + 术语表回收），不是裸调接口。
+9 句西语电气装置课堂文本，**思考档固定 low**（预设默认值）：
+
+| 项 | 结果 |
+| --- | --- |
+| 空译文 | **0 / 9**（修复前是 6 / 9，见下） |
+| 平均延迟 | 2.35s/句（最低 1.35s，最高 4.23s） |
+| 中位延迟 | 2.24s/句 |
+| 对照基线 | wbmanager `glm-5.3-flash`（low）约 2.57s/句 |
+| `deepseek-v4-pro` | 3.94s/句——不建议做逐句翻译 |
+
+术语质量（同一把钥匙，实测输出）：
+
+```
+instalación eléctrica            → 住宅的电气装置（instalación eléctrica）
+consignar la instalación         → 对上锁挂牌（consignar）
+diferencial                      → 剩余电流保护装置（diferencial）
+caída de tensión                 → 电压降（caída de tensión）
+interruptor automático magnetotérmico → 热磁断路器（interruptor automático magnetotérmico）
+```
+
+### 踩到的坑：推理模型的思考 token 吃掉译文预算
+
+刚接进来时 9 句里有 6 句返回空译文——课堂上表现为「字幕突然少一句」。
+
+根因不是模型也不是网络，是 **`max_tokens` 把 `reasoning_token` 也算在里面**：
+
+| 参数 | 值 |
+| --- | --- |
+| 句子长度 | 69 字符 → 预算 `min(800, 100+69) = 169` |
+| 实测 reasoning_tokens | 69–207（**与句长无关，波动大**） |
+| 结果 | 思考吃光预算 → `finish_reason=length` → content 溢出为空 |
+
+不传 `reasoning_effort` 时更糟（默认档思考 166–202 token，169 的预算直接截成「住宅的」）。
+
+修法：`client.reasoning_effort` 非空时预算加 400 余量（上限 1200）。**这条对所有推理模型生效**，
+不只是 DeepSeek——wbmanager 网关的 GLM-5 / DeepSeek-V4 是同一类模型。回归测试
+`tests/test_translate_budget.py` 守两件事：有余量、非推理模型不被顺带放大。
+
+### 用法
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+aula --provider deepseek --open      # 预设已含 base_url / model / low 思考档
+```
+
+预设走 `deepseek-flash`（V4.1-Flash，1M 上下文，支持 low/high/max）。想更强就
+`--model deepseek-v4-pro`，代价是延迟翻倍——实时字幕场景不值得。

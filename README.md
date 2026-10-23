@@ -115,6 +115,7 @@ bash scripts/build_app.sh --probe       # 自检：起服务 → 健康 → 建�
 | --- | --- | --- | --- |
 | `ollama` | `qwen3:8b` | 对话 + 转写 | 无限、离线、无需密钥 |
 | `wbmanager` | `cn:glm-5.3-flash` | 对话 | 复用本机 WorkBuddy Manager 账号池，面板需在 7864 运行 |
+| `deepseek` | `deepseek-flash` | 对话 | 按 token 计费（low 档单句翻译 1.4–4.2s，中位 2.2s） |
 | `gemini` | `gemini-3.8-flash` | 对话 + 转写 | 约 10–15 RPM / 250–1500 RPD |
 | `groq` | `llama-3.3-70b` + `whisper-large-v3-turbo` | 对话 + 转写 | 约 30 RPM / 1000 RPD |
 | `openrouter` / `cerebras` / `mistral` / `zhipu` / `siliconflow` / `github` / `dashscope` / `openai` | 见 `aula providers` | 对话（部分含转写） | 各家不同 |

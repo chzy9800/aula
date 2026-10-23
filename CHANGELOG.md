@@ -4,6 +4,37 @@
 
 ## [未发布]
 
+### 修复：推理模型的思考 token 吃掉译文预算（表现为译文空白）
+
+接 DeepSeek 官方 API 时暴露：9 句课堂西语有 6 句译成空字符串，课堂上就是「字幕突然
+少一句」。根因是 `max_tokens` 把 `reasoning_token` 也算在里面，而预算按句子字符数给
+（69 字符 → 169），实测单句思考量却在 69–207 之间波动、与句长无关——思考吃光预算，
+`finish_reason=length`，content 溢出为空。
+
+修法：`client.reasoning_effort` 非空时预算加 400 余量（上限 1200）。**影响所有推理模型**，
+不只是 DeepSeek——wbmanager 网关的 GLM-5 / DeepSeek-V4 是同一类。修复后同一组 9 句
+空译文 0 条，平均 2.35s/句。
+
+顺手补上 `Translator` 失败时的日志：原来 `except LLMError: return ""` 静默丢句子，
+排查时完全看不出原因。现在会记 `翻译失败（本句留空）：<原因>`。
+
+新增 `tests/test_translate_budget.py`（3 项）守两件事：推理模型有余量、非推理模型
+不被顺带放大。
+
+### 新增：DeepSeek 官方 API 预设
+
+`aula --provider deepseek` 直连 `api.deepseek.com`，预设走 `deepseek-flash`
+（V4.1-Flash，1M 上下文，`low` 思考档保实时性）。实测 low 档 2.35s/句、术语质量
+扎实（`diferencial → 剩余电流保护装置`、`caída de tensión → 电压降`）；`v4-pro`
+3.94s/句，不建议做逐句翻译。数据与踩坑见 docs/providers.md 第八节。
+
+### 新增：`build_app.sh --sync-code`——只同步后端源码
+
+app 跑的是 bundle 里的 Python 副本，改完仓库源码不重新构建就等于没改（为这个白排查过
+一次「译文为什么还是空」）。现在 `bash scripts/build_app.sh --sync-code` 只更新源码并
+重签，秒级完成，不用等整套构建。
+
+
 ### 新增：听课记录导出——上课到笔记的闭环
 
 下课后 footer 出现「生成听课记录」，点开是一个 sheet：生成中给进度，成功后显示带 YAML
