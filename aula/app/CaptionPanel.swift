@@ -13,6 +13,7 @@ final class CaptionPanel: NSObject, NSWindowDelegate {
     private var cancellables: Set<AnyCancellable> = []
     private weak var store: ClassStore?
     private let style: CaptionStyle
+    private var statusDot: NSView!
 
     private static let defaultSize = NSSize(width: 468, height: 156)
     private static let minSize = NSSize(width: 320, height: 96)
@@ -57,6 +58,13 @@ final class CaptionPanel: NSObject, NSWindowDelegate {
         handle.autoresizingMask = [.minXMargin, .maxYMargin]
         effect.addSubview(handle)
 
+        // 左上角状态点：录音中是青色，出错是橙色。比文字省地方，扫一眼就知道在不在录
+        statusDot = NSView(frame: NSRect(x: 10, y: rect.height - 14, width: 5, height: 5))
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 2.5
+        statusDot.autoresizingMask = [.maxXMargin, .minYMargin]
+        effect.addSubview(statusDot)
+
         panel.contentView = effect
         super.init()
         panel.delegate = self
@@ -89,6 +97,7 @@ final class CaptionPanel: NSObject, NSWindowDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] phase in
                 guard let self else { return }
+                self.refreshStatusDot()
                 if phase == .listening || phase == .starting {
                     self.show()
                 } else if phase == .failed {
@@ -114,6 +123,20 @@ final class CaptionPanel: NSObject, NSWindowDelegate {
 
     private func applyStyle() {
         panel.alphaValue = CGFloat(max(0.25, min(1, style.floatingOpacity)))
+        refreshStatusDot()
+    }
+
+    private func refreshStatusDot() {
+        let color: NSColor
+        switch store?.phase {
+        case .listening, .starting:
+            color = NSColor(srgbRed: 0.42, green: 0.76, blue: 0.78, alpha: 0.95)
+        case .failed:
+            color = NSColor.systemOrange.withAlphaComponent(0.9)
+        default:
+            color = NSColor.secondaryLabelColor.withAlphaComponent(0.5)
+        }
+        statusDot?.layer?.backgroundColor = color.cgColor
     }
 
     // MARK: - 显隐

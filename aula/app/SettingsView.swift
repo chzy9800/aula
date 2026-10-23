@@ -99,6 +99,7 @@ struct SettingsView: View {
             }
         }
         .frame(width: 760, height: 540)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: 侧边栏
@@ -423,7 +424,7 @@ struct SettingsView: View {
             Text(title).font(.system(size: 12))
             Spacer()
             RoundedRectangle(cornerRadius: 4)
-                .fill(hex.wrappedValue.isEmpty ? Color.secondary.opacity(0.25) : Color(hex: hex.wrappedValue))
+                .fill(hex.wrappedValue.isEmpty ? Color.primary.opacity(0.15) : Color(hex: hex.wrappedValue))
                 .frame(width: 18, height: 18)
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.15)))
             TextField("自动", text: hex)

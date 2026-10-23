@@ -145,6 +145,7 @@ struct TranscriptLibraryView: View {
             content
         }
         .frame(width: 720, height: 520)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { model.reload() }
     }
 

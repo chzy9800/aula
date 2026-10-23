@@ -400,6 +400,9 @@ func runRenderSettings(_ outputPath: String, category: String, lang: String = "z
     let store = ClassStore(sidecar: Sidecar())
     let hosting = NSHostingView(rootView: SettingsView(model: model, settings: store.settings,
                                                        style: store.style, classStore: store))
+    if ProcessInfo.processInfo.arguments.contains("dark") {
+        hosting.appearance = NSAppearance(named: .darkAqua)
+    }
     hosting.frame = NSRect(x: 0, y: 0, width: 760, height: 540)
     let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled],
                           backing: .buffered, defer: false)

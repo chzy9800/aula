@@ -26,8 +26,17 @@ final class CaptionStyle: ObservableObject {
         let sourceHex: String
         let outline: Bool
 
-        /// 色块按钮上的短名，长的放 help 里
-        var shortName: String { String(name.prefix(4)) }
+        /// 色块按钮上的短名（手写，不用截断——中文按字数截会断在词中间）
+        var shortName: String {
+            switch id {
+            case "default": return "系统"
+            case "yellow": return "亮黄"
+            case "dark": return "深字"
+            case "mint": return "薄荷"
+            case "amber": return "琥珀"
+            default: return String(name.prefix(2))
+            }
+        }
     }
 
     static let presets: [Preset] = [
