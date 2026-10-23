@@ -92,7 +92,7 @@ func pump(_ seconds: Double) {
 
 /// 无 UI 跑通整条课堂链路：起服务 → 建课堂 → 连 WS → 发真实西语 PCM → 断言三层消息。
 /// 这条命令就是「界面能上课」的前置条件，进了 CI 就不用人肉点按钮。
-func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
+func runClassProbe(_ pcmDir: String, withDigest: Bool = false, priority: String = "quality") -> Int32 {
     let sidecar = Sidecar()
     sidecar.start()
     var waited = 0.0
@@ -120,6 +120,7 @@ func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
     var transcripts = 0
     var translations = 0
     var deltas = 0
+    var fastFirst = 0   // transcript 自带译文（speed 模式的首译）
     var errors: [String] = []
     var sources: [Int: String] = [:]
     var targets: [Int: String] = [:]
@@ -135,7 +136,10 @@ func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
         case .transcript(let seq, _, let source, let target, _):
             transcripts += 1
             sources[seq] = source
-            if !target.isEmpty { targets[seq] = target }
+            if !target.isEmpty {
+                targets[seq] = target
+                fastFirst += 1        // speed 模式：译文随原文一起到
+            }
         case .translationDelta:
             deltas += 1
         case .translation(let seq, let target):
@@ -150,6 +154,10 @@ func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
     }
     realtime.connect(baseURL: sidecar.baseURL, sessionId: sid)
     pump(2)
+    // 声明本次运行的翻译档位（和 app 里的做法一致）
+    realtime.sendText("{\"output_mode\":\"bilingual\"}")
+    realtime.sendText("{\"translation_priority\":\"\(priority)\"}")
+    pump(0.3)
 
     guard readyCount > 0 else {
         print("PROBE FAIL: 没收到 ready")
@@ -188,7 +196,8 @@ func runClassProbe(_ pcmDir: String, withDigest: Bool = false) -> Int32 {
     //   · translation 只在精译 != 粗译时才推（省一次回填闪烁），所以条数 ≤ transcript 数是正常的
     let missingTranslation = sources.keys.filter { (targets[$0] ?? "").isEmpty }
     print("--- 课堂链路 ---")
-    print("  ready: \(readyCount)")
+    print("  ready: \(readyCount)   档位: \(priority)")
+    print("  transcript 自带译文（首译）: \(fastFirst) / \(transcripts)")
     print("  partial(草稿，尽力而为): \(partials)")
     print("  transcript(定稿): \(transcripts)")
     print("  translation_delta(流式增量): \(deltas)")
@@ -797,7 +806,8 @@ final class AulaApp {
         }
         if let i = args.firstIndex(of: "--probe-class") {
             let dir = args.count > i + 1 ? args[i + 1] : "."
-            exit(runClassProbe(dir, withDigest: args.contains("digest")))
+            let priority = args.contains("speed") ? "speed" : "quality"
+            exit(runClassProbe(dir, withDigest: args.contains("digest"), priority: priority))
         }
         if let i = args.firstIndex(of: "--render-preview") {
             let path = args.count > i + 1 ? args[i + 1] : "/tmp/aula-preview.png"

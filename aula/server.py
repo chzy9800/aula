@@ -27,6 +27,7 @@ import os
 import shutil
 import struct
 import subprocess
+import difflib
 import json
 import tempfile
 from pathlib import Path
@@ -56,6 +57,8 @@ logger = logging.getLogger("aula.server")
 _HUBS: Dict[str, Set[WebSocket]] = {}
 # 每节课的输出模式：bilingual（默认）/ source_only（只要原文，省掉整条翻译调用）
 _OUTPUT_MODES: Dict[str, str] = {}
+# 翻译优先级：quality（默认，只等 LLM）/ speed（MT 先出，LLM 再修）
+_TRANSLATION_PRIORITY: Dict[str, str] = {}
 # 本机助手子进程，按 session 记账
 _CAPTURES: Dict[str, subprocess.Popen] = {}
 
@@ -447,7 +450,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
 
     @app.websocket("/ws/live")
     async def live(websocket: WebSocket, session_id: str = Query(...)) -> None:
-        global _OUTPUT_MODES   # 跨连接共享每节课的输出模式（赋值需要 global）
+        global _OUTPUT_MODES, _TRANSLATION_PRIORITY   # 跨连接共享（赋值需要 global）
         await websocket.accept()
         db_path = engines.settings.db_path()
         session = store.get_session(db_path, session_id)
@@ -575,13 +578,16 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     queue.task_done()
                     continue
 
-                # 有 LLM 就走流式精译：transcript 里不带译文，译文由随后的
-                # translation_delta 逐字补上——屏幕上只有"长出来"，没有"被替换"。
-                # 没有 LLM 时才退回专用翻译接口（一次性返回，无增量）。
-                uses_llm = (engines.translator.enabled
-                            and _OUTPUT_MODES.get(session_id) != "source_only")
+                # 三种情况：
+                #   quality（默认）——transcript 不带译文，等 LLM 流式逐字长出来
+                #   speed——专用 MT 先出（实测 0.13s/句），LLM 精译到了再按差异决定是否替换
+                #   source_only——完全不做翻译
+                source_only = _OUTPUT_MODES.get(session_id) == "source_only"
+                speed_mode = _TRANSLATION_PRIORITY.get(session_id) == "speed"
+                uses_llm = engines.translator.enabled and not source_only
                 fallback_text = ""
-                if not uses_llm and engines.fast_mt is not None:
+                want_fast = (not uses_llm or speed_mode) and not source_only
+                if want_fast and engines.fast_mt is not None:
                     try:
                         fallback_text = await asyncio.to_thread(
                             engines.fast_mt.translate, text,
@@ -611,9 +617,27 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                 )
 
                 if uses_llm:
-                    translated = await stream_translate(text, record["seq"])
+                    if speed_mode:
+                        # 屏幕上已经有首译，再推增量会叠在它后面；等完整结果再决定替换
+                        try:
+                            translated = await asyncio.to_thread(
+                                engines.translator.translate, text
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("精译失败（首译已在屏）：%s", exc)
+                            translated = ""
+                    else:
+                        translated = await stream_translate(text, record["seq"])
                     if translated:
                         store.set_translation(db_path, session_id, record["seq"], translated)
+                        # speed 模式下先显示的是 MT 译文：精译与它太像就别替换，
+                        # 那种"改写几个字"的抖动比不修更烦人
+                        if speed_mode and fallback_text:
+                            similarity = difflib.SequenceMatcher(
+                                None, fallback_text, translated
+                            ).ratio()
+                            if similarity >= 0.75:
+                                continue
                         # 收尾的完整文本：客户端漏接 delta 时用它兜底（幂等覆盖）
                         await _broadcast(
                             session_id,
@@ -702,6 +726,14 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     elif '"flush"' in text_frame:
                         await queue.join()
                         await _broadcast(session_id, {"type": "flushed"})
+                    elif '"translation_priority"' in text_frame:
+                        try:
+                            prio_frame = json.loads(text_frame)
+                        except ValueError:
+                            prio_frame = {}
+                        prio = str(prio_frame.get("translation_priority") or "quality")
+                        _TRANSLATION_PRIORITY[session_id] = prio
+                        await _broadcast(session_id, {"type": "translation_priority", "mode": prio})
                     elif '"output_mode"' in text_frame:
                         # 仅原文模式：本会话完全不做翻译，省掉整条 LLM 调用
                         try:
@@ -723,6 +755,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
             if not _HUBS.get(session_id):
                 _HUBS.pop(session_id, None)
                 _OUTPUT_MODES.pop(session_id, None)
+                _TRANSLATION_PRIORITY.pop(session_id, None)
 
     return app
 

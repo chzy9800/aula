@@ -440,6 +440,7 @@ final class ClassStore: ObservableObject {
                 self.asrLabel = "\(asr)/\(model)"
                 // 告诉服务端这节课要不要翻译（「只要原文」时整条 LLM 调用都省掉）
                 self.realtime.sendText("{\"output_mode\":\"\(self.settings.outputMode.serverValue)\"}")
+                self.realtime.sendText("{\"translation_priority\":\"\(self.settings.translationPriority.rawValue)\"}")
                 self.beginCapture()
             case .partial(_, let source, let target):
                 guard !source.isEmpty else { return }

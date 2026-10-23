@@ -316,6 +316,35 @@ class ApiTest(unittest.TestCase):
             engines.fast_mt = previous_mt
             engines.translator.enabled = original_enabled
 
+    def test_websocket_speed_mode_shows_fast_translation_first(self):
+        """速度优先：MT 首译随 transcript 一起到，LLM 精译随后按差异决定是否替换。
+
+        这条守的是"实时感"——首译必须和原文同一条消息到达，不能等 2 秒后才有字。
+        """
+        class FakeFastMT:
+            def translate(self, text, source, target):
+                return "快译:" + text[:6]
+
+        sid = self.new_session()
+        self.app.state.engines.fast_mt = FakeFastMT()
+        pcm = b"\x00\x00" * 16000
+        header = struct.pack("<II", 0, 1000)
+        try:
+            with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
+                self.assertEqual(ws.receive_json()["type"], "ready")
+                ws.send_text('{"translation_priority":"speed"}')
+                ack = ws.receive_json()
+                self.assertEqual(ack["type"], "translation_priority")
+                self.assertEqual(ack["mode"], "speed")
+
+                ws.send_bytes(header + pcm)
+                first = ws.receive_json()
+                self.assertEqual(first["type"], "transcript")
+                self.assertIn("快译:", first["utterance"]["target"],
+                              "首译必须随原文一起到，否则实时感就没了")
+        finally:
+            self.app.state.engines.fast_mt = None
+
     def test_websocket_source_only_skips_translation(self):
         """「只要原文」模式：服务端完全不做翻译，省掉整条 LLM 调用。
 

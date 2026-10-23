@@ -29,7 +29,24 @@ final class AppSettings: ObservableObject {
         var serverValue: String { self == .sourceOnly ? "source_only" : "bilingual" }
     }
 
+    /// 翻译优先级：quality = 只等 LLM（准但 2.3 秒）；speed = 专用 MT 先出（约 0.13 秒）
+    /// 再由 LLM 精修，两者差得远才替换。这就是 AirTranslate 的体感来源。
+    enum TranslationPriority: String, CaseIterable, Identifiable {
+        case quality, speed
+        var id: String { rawValue }
+        var label: String { self == .quality ? "质量优先" : "速度优先" }
+        var note: String {
+            switch self {
+            case .quality:
+                return "只等大模型，译文一步到位，约 2.3 秒/句。不会出现二次替换。"
+            case .speed:
+                return "专用翻译接口先出（实测 0.13 秒/句），大模型随后精修；两者差得远才替换。"
+            }
+        }
+    }
+
     @Published var outputMode: OutputMode { didSet { persist() } }
+    @Published var translationPriority: TranslationPriority { didSet { persist() } }
 
     // —— 转写 ——
     /// 段落断句静音阈值（毫秒）。对应 AirTranslate 的 `Paragraph Break Silence`
@@ -54,7 +71,8 @@ final class AppSettings: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
-        paragraphSilenceMs = defaults.object(forKey: Self.prefix + "silenceMs") as? Double ?? 700
+        translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality
+        paragraphSilenceMs = defaults.object(forKey: Self.prefix + "silenceMs") as? Double ?? 550
         minSpeechMs = defaults.object(forKey: Self.prefix + "minSpeechMs") as? Double ?? 350
         maxSegmentMs = defaults.object(forKey: Self.prefix + "maxSegmentMs") as? Double ?? 15000
         newSessionEachStart = defaults.object(forKey: Self.prefix + "newSession") as? Bool ?? true
@@ -68,6 +86,7 @@ final class AppSettings: ObservableObject {
     private func persist() {
         let defaults = UserDefaults.standard
         defaults.set(outputMode.rawValue, forKey: Self.prefix + "outputMode")
+        defaults.set(translationPriority.rawValue, forKey: Self.prefix + "transPriority")
         defaults.set(paragraphSilenceMs, forKey: Self.prefix + "silenceMs")
         defaults.set(minSpeechMs, forKey: Self.prefix + "minSpeechMs")
         defaults.set(maxSegmentMs, forKey: Self.prefix + "maxSegmentMs")

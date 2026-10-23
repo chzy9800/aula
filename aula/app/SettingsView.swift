@@ -197,6 +197,18 @@ struct SettingsView: View {
             }
             hint(settings.outputMode.note)
             divider
+            settingRow("翻译优先级") {
+                Picker("", selection: $settings.translationPriority) {
+                    ForEach(AppSettings.TranslationPriority.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 200)
+            }
+            hint(settings.translationPriority.note)
+            divider
             keyValue("翻译方式", "大模型流式翻译（逐字上屏）")
             keyValue("当前模型", classStore.asrLabel.isEmpty ? "未连接" : classStore.asrLabel)
             hint("译文只有一个来源，逐字长出来，不会整句替换——这是为了避免屏幕上反复闪。")
