@@ -105,7 +105,7 @@ bash scripts/build_app.sh --probe       # 自检：起服务 → 健康 → 建�
 ~/Applications/aula.app/Contents/MacOS/aula --render-preview out.png  # 把界面渲染成图
 ```
 
-现状与实测数据见 [docs/b-route-validation.md](docs/b-route-validation.md)：服务可用 780–830ms、退出无残留、3000 条列表布局 60ms。**上课链路已闭环**——选音源（麦克风/系统声音）→ ⌥⌘R 开始 → 逐句双语 → 停止后「生成听课记录」导出 Markdown。**讲义工作区尚未接到原生界面**（PDFKit 可行性已验，见同文档 V1）。
+现状与实测数据见 [docs/b-route-validation.md](docs/b-route-validation.md)：服务可用 780–830ms、退出无残留、3000 条列表布局 60ms。**上课链路已闭环**——⌥⌘R 全局开始/停止（不用切窗口），右上角浮着双语字幕；选音源（麦克风/系统声音）→ 逐句双语 → 停止后「生成听课记录」导出 Markdown。**讲义工作区尚未接到原生界面**（PDFKit 可行性已验，见同文档 V1）。
 
 ## 内置服务商与免密钥翻译
 

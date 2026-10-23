@@ -4,6 +4,22 @@
 
 ## [未发布]
 
+### 新增：全局快捷键 ⌥⌘R 与悬浮字幕窗——上课不用切窗口
+
+`aula/app/HotKey.swift`：Carbon `RegisterEventHotKey` 注册全局热键，**不需要辅助功能
+权限**（`NSEvent.addGlobalMonitorForEvents` 需要，还得重启 app）。注意⌥⌘R 在界面聚焦
+时也能用，但事件被 Carbon 先吃掉，不会双触发。注册失败是这条链路唯一的失败点（键位被
+别的应用占用），所以失败会写在菜单栏标题上，不静默。
+
+`aula/app/CaptionPanel.swift`：右上角悬浮双语字幕，`.nonactivatingPanel`（点它不抢焦点）、
+`.canJoinAllSpaces`（切 Space 跟着走）、`.hudWindow` 毛玻璃、保留 3 句、最新在上。
+从 `ClassStore` 的 Combine 流被动渲染——原菜单栏版自己维护 lines，这里改成单一数据源，
+免得字幕窗和主界面显示不一致。听课时自动浮出，停止后保留让人回看最后几句。
+
+两个自检入口：`--probe-hotkey`（注册→报告→注销，验证键位可用）、`--render-caption <png>`
+（字幕窗渲染成图，改完布局先看图再起 app）。
+
+
 ### 修复：推理模型的思考 token 吃掉译文预算（表现为译文空白）
 
 接 DeepSeek 官方 API 时暴露：9 句课堂西语有 6 句译成空字符串，课堂上就是「字幕突然

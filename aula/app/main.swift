@@ -14,6 +14,7 @@ import Foundation
 import AppKit
 import SwiftUI
 import AVFoundation
+import Carbon.HIToolbox
 
 // MARK: - 命令行自检
 
@@ -370,6 +371,45 @@ func runSystemAudioProbe(seconds: Double) -> Int32 {
     return ok ? 0 : 1
 }
 
+/// 全局快捷键自检：注册 → 报告 → 注销。
+/// 真正的按键无法自动按，但「能不能注册」是这条链路唯一的失败点
+/// （键位被别的应用占用时会返回 OSStatus），验证它就有意义。
+func runHotKeyProbe() -> Int32 {
+    let hotKey = HotKey(keyCode: kVK_ANSI_R, modifiers: HotKey.optionCommand) {
+        print("  （触发了回调）")
+    }
+    hotKey.onRegisterFailed = { message in
+        print("  FAIL: \(message)")
+    }
+    let ok = hotKey.register()
+    print("--- 全局快捷键 ⌥⌘R ---")
+    print("  register: \(ok ? "成功" : "失败")")
+    hotKey.unregister()
+    print("  已注销（避免占用组合键）")
+    print(ok ? "PROBE OK" : "PROBE FAIL")
+    return ok ? 0 : 1
+}
+
+/// 字幕浮窗渲染自检：灌 demo 数据 → 渲染成 PNG。
+func runRenderCaption(_ outputPath: String) -> Int32 {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
+    let store = ClassStore(sidecar: Sidecar())
+    store.loadDemoLines(count: 3)
+    let panel = CaptionPanel()
+    panel.bind(to: store)
+    pump(0.4)
+
+    guard panel.snapshot(to: outputPath) else {
+        print("PREVIEW FAIL: 渲染或写文件失败")
+        return 1
+    }
+    print("PREVIEW OK: \(outputPath)")
+    print("  说明：毛玻璃材质在离屏渲染里会退化成纯色，图只验布局与文字")
+    return 0
+}
+
 // MARK: - 状态窗
 
 final class StatusWindowController: NSWindowController {
@@ -463,7 +503,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusWindow: StatusWindowController?
     private var classWindow: NSWindow?
     private lazy var classStore = ClassStore(sidecar: sidecar)
+    private lazy var captionPanel = CaptionPanel()
+    private var listenHotKey: HotKey?
     private var logItem: NSMenuItem!
+    private var captionItem: NSMenuItem!
     /// 信号源要留引用，否则被释放后 handler 不再触发
     private var signalSources: [DispatchSourceSignal] = []
 
@@ -487,12 +530,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         sidecar.start()
 
+        // 悬浮字幕窗：跟着 ClassStore 走，不自己维护数据
+        captionPanel.bind(to: classStore)
+
+        // 全局快捷键 ⌥⌘R：Carbon 注册，不要辅助功能权限。
+        // 注册失败必须让人知道——常驻应用静默失去快捷键等于功能缺失。
+        listenHotKey = HotKey(keyCode: kVK_ANSI_R, modifiers: HotKey.optionCommand) { [weak self] in
+            self?.toggleListening()
+        }
+        listenHotKey?.onRegisterFailed = { [weak self] message in
+            DispatchQueue.main.async {
+                self?.logItem.title = "服务：快捷键不可用（\(message)）"
+            }
+        }
+        listenHotKey?.register()
+
         // 常驻类应用必须给首启反馈——菜单栏图标可能被折叠进「≫」，静默启动会像没打开。
         // 首启直接开上课界面：这是用户双击后真正想看的东西，服务状态窗退到菜单里。
         showClass(nil)
     }
 
+    /// 全局热键与界面按钮共用一套判断：能停就停，能开就开，都不能就把界面亮出来说明原因。
+    private func toggleListening() {
+        if classStore.canStop {
+            classStore.stop()
+        } else if classStore.canStart {
+            classStore.start()
+        } else {
+            showClass(nil)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        // 全局热键要注销，否则同一个组合在下次启动前一直被占
+        listenHotKey?.unregister()
         // 不能省也不能异步：不留 sidecar 孤儿进程占着端口和 SQLite
         sidecar.stopAndWait()
     }
@@ -526,6 +597,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(withTitle: "上课界面", action: #selector(showClass(_:)), keyEquivalent: "1")
             .target = self
+        captionItem = menu.addItem(withTitle: "显示字幕浮窗", action: #selector(toggleCaptions(_:)), keyEquivalent: "l")
+        captionItem.target = self
         menu.addItem(withTitle: "显示服务状态", action: #selector(showStatus(_:)), keyEquivalent: "s")
             .target = self
         menu.addItem(withTitle: "重启服务", action: #selector(restartSidecar(_:)), keyEquivalent: "r")
@@ -555,6 +628,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         classWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func toggleCaptions(_ sender: Any?) {
+        captionPanel.toggle()
+        captionItem.title = captionPanel.visible ? "隐藏字幕浮窗" : "显示字幕浮窗"
     }
 
     @objc private func showStatus(_ sender: Any?) {
@@ -601,6 +679,13 @@ final class AulaApp {
         }
         if args.contains("--probe-permissions") {
             exit(runPermissionProbe())
+        }
+        if args.contains("--probe-hotkey") {
+            exit(runHotKeyProbe())
+        }
+        if let i = args.firstIndex(of: "--render-caption") {
+            let path = args.count > i + 1 ? args[i + 1] : "/tmp/aula-caption.png"
+            exit(runRenderCaption(path))
         }
         if let i = args.firstIndex(of: "--probe-system-audio") {
             let seconds = args.count > i + 1 ? (Double(args[i + 1]) ?? 6) : 6
