@@ -470,7 +470,8 @@ final class ClassStore: ObservableObject {
         lines = (0..<max(0, count)).map { index in
             let item = samples[index % samples.count]
             return Line(id: index + 1, source: item.0, target: item.1,
-                        refined: index % 3 == 2, latencyMs: item.2, at: Date())
+                        refined: index % 3 == 2, latencyMs: item.2, at: Date(),
+                        streaming: listening && index == count - 1)
         }
         // 已结束就没有草稿行了——真实停止时 draft 也会被清空
         draft = listening ? Line(id: -1,
