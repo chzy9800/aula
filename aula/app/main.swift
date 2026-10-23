@@ -787,6 +787,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "设置…", action: #selector(showSettings(_:)), keyEquivalent: ",")
             .target = self
         menu.addItem(.separator())
+        menu.addItem(withTitle: "引擎诊断…", action: #selector(showEngineDiagnosis(_:)), keyEquivalent: "")
+            .target = self
         menu.addItem(withTitle: "音频诊断…", action: #selector(runAudioDiagnosis(_:)), keyEquivalent: "")
             .target = self
         menu.addItem(withTitle: "打开应用日志", action: #selector(openAppLog(_:)), keyEquivalent: "")
@@ -884,6 +886,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 音频诊断：先讲清要做什么，再跑 6 秒捕获，最后按结果给出可执行的下一步。
     /// 用户报「系统声音识别不出」时，这一个入口能把三种原因分开。
+    @objc private func showEngineDiagnosis(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "引擎诊断"
+        alert.informativeText = classStore.engineDiagnosis()
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: "复制")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(classStore.engineDiagnosis(), forType: .string)
+        }
+    }
+
     @objc private func runAudioDiagnosis(_ sender: Any?) {
         let intro = NSAlert()
         intro.messageText = "音频诊断"

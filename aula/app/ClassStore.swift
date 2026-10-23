@@ -555,6 +555,43 @@ final class ClassStore: ObservableObject {
         }
     }
 
+    /// 引擎诊断：把「到底断在哪一环」直接摆出来，不用翻日志。
+    func engineDiagnosis() -> String {
+        var rows: [String] = []
+        rows.append("识别引擎：\(settings.engineKind.label)")
+        rows.append("翻译引擎：\(settings.translationEngine.label)")
+
+        let status = AppleSpeech.authorizationStatus()
+        let statusText: String
+        switch status {
+        case .authorized: statusText = "已授权"
+        case .notDetermined: statusText = "未询问（点开始会弹窗）"
+        case .denied: statusText = "已拒绝"
+        case .restricted: statusText = "受系统限制"
+        @unknown default: statusText = "未知"
+        }
+        rows.append("语音识别授权：\(statusText)（raw \(status.rawValue)）")
+        rows.append("识别语言包 es-ES：\(AppleSpeech.availability(locale: "es-ES"))")
+
+        if #available(macOS 15.0, *) {
+            rows.append("Apple 翻译：成功 \(appleTranslator.successCount) · 失败 \(appleTranslator.failureCount)")
+            if appleTranslator.lastLatency > 0 {
+                rows.append(String(format: "最近翻译耗时：%.2f 秒", appleTranslator.lastLatency))
+            }
+            if !appleTranslator.lastError.isEmpty {
+                rows.append("最近翻译错误：\(appleTranslator.lastError)")
+            }
+        }
+
+        rows.append("已识别句子：\(lines.count) 句")
+        if let last = lines.last {
+            rows.append("最后一句原文：\(String(last.source.prefix(40)))")
+            rows.append("最后一句译文：\(last.target.isEmpty ? "（空）" : String(last.target.prefix(40)))")
+        }
+        rows.append("服务：\(sidecar.statusText)")
+        return rows.joined(separator: "\n")
+    }
+
     // MARK: - 音频诊断
 
     /// 诊断「系统声音识别不出」：分清是没有数据、数据全静音、还是 VAD 没触发。

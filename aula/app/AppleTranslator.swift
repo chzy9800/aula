@@ -22,6 +22,11 @@ final class AppleTranslator: ObservableObject {
     private var pending: [(text: String, completion: (String?) -> Void)] = []
     private var sourceLang = "es"
     private var targetLang = "zh-Hans"
+    /// 诊断用：最近一次耗时与累计计数
+    private(set) var lastLatency: TimeInterval = 0
+    private(set) var successCount = 0
+    private(set) var failureCount = 0
+    private(set) var lastError: String = ""
 
     /// 语言对是否可用（不下载、只查询）
     static func availability(source: String, target: String) async -> Bool {
@@ -42,12 +47,15 @@ final class AppleTranslator: ObservableObject {
         sourceLang = source
         targetLang = target
         if bridgeWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 1, height: 1),
+            // 不能用 alpha=0 且放到屏幕外：那种窗口系统可能判定"不可见"，
+            // SwiftUI 的 .translationTask 就不会触发。放到屏幕角落 + 0.01 更稳。
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
                                   styleMask: [.borderless],
                                   backing: .buffered, defer: false)
             window.isOpaque = false
-            window.alphaValue = 0
+            window.alphaValue = 0.01
             window.ignoresMouseEvents = true
+            window.level = .normal
             window.contentView = NSHostingView(rootView: TranslationBridge(translator: self))
             bridgeWindow = window
         }
@@ -81,13 +89,25 @@ final class AppleTranslator: ObservableObject {
     }
 
     private func run(_ text: String, session: TranslationSession, completion: @escaping (String?) -> Void) {
+        let started = Date()
         Task {
             do {
                 let response = try await session.translate(text)
                 let translated = response.targetText
-                await MainActor.run { completion(translated.isEmpty ? nil : translated) }
+                let elapsed = Date().timeIntervalSince(started)
+                await MainActor.run {
+                    self.lastLatency = elapsed
+                    self.successCount += 1
+                    AppLog.write(String(format: "apple-translate: %.2fs「%@」→「%@」",
+                                        elapsed,
+                                        String(text.prefix(24)),
+                                        String(translated.prefix(24))))
+                    completion(translated.isEmpty ? nil : translated)
+                }
             } catch {
                 await MainActor.run {
+                    self.failureCount += 1
+                    self.lastError = error.localizedDescription
                     AppLog.write("apple-translate: 失败 \(error.localizedDescription)")
                     completion(nil)
                 }
@@ -95,7 +115,7 @@ final class AppleTranslator: ObservableObject {
         }
     }
 
-    fileprivate func attach(_ session: TranslationSession) {
+    func attach(_ session: TranslationSession) {
         self.session = session
         let waiting = pending
         pending.removeAll()
