@@ -70,6 +70,16 @@ struct SettingsView: View {
             Divider().opacity(0.4)
             VStack(alignment: .leading, spacing: 0) {
                 pageHeader
+                if classStore.phase == .listening || classStore.phase == .starting {
+                    HStack(spacing: 6) {
+                        Image(systemName: "lock.fill").font(.system(size: 10))
+                        Text("正在听课：转写与翻译设置将在停止后生效")
+                            .font(.system(size: 10.5))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+                }
                 Divider().opacity(0.25)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
@@ -175,6 +185,18 @@ struct SettingsView: View {
 
     private var translationPage: some View {
         Group {
+            settingRow("输出模式") {
+                Picker("", selection: $settings.outputMode) {
+                    ForEach(AppSettings.OutputMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 280)
+            }
+            hint(settings.outputMode.note)
+            divider
             keyValue("翻译方式", "大模型流式翻译（逐字上屏）")
             keyValue("当前模型", classStore.asrLabel.isEmpty ? "未连接" : classStore.asrLabel)
             hint("译文只有一个来源，逐字长出来，不会整句替换——这是为了避免屏幕上反复闪。")

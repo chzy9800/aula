@@ -164,7 +164,7 @@ final class ClassStore: ObservableObject {
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             guard let self else { return }
             guard granted else {
-                self.setPhase(.failed, "麦克风未授权：系统设置 → 隐私与安全性 → 麦克风，勾上 aula")
+                self.setPhase(.failed, "麦克风未授权：系统设置 → 隐私与安全性 → 麦克风，勾上 aula 后重启 app")
                 return
             }
             self.createSession()
@@ -248,7 +248,7 @@ final class ClassStore: ObservableObject {
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0 else {
-            setPhase(.failed, "拿不到麦克风格式（可能没有输入设备）")
+            setPhase(.failed, "拿不到麦克风格式：系统里可能没有可用的输入设备。插一个麦克风，或在设置 → 声音 里检查输入源")
             return
         }
         let target = AVAudioFormat(commonFormat: .pcmFormatInt16,
@@ -265,7 +265,7 @@ final class ClassStore: ObservableObject {
         } catch {
             input.removeTap(onBus: 0)
             micTapInstalled = false
-            setPhase(.failed, "启动音频引擎失败：\(error.localizedDescription)")
+            setPhase(.failed, "启动音频引擎失败：\(error.localizedDescription)。先试「系统声音」这一档，或检查麦克风是否被别的应用独占")
             return
         }
         startedAt = Date()
@@ -438,6 +438,8 @@ final class ClassStore: ObservableObject {
             switch event {
             case .ready(let asr, let model, _):
                 self.asrLabel = "\(asr)/\(model)"
+                // 告诉服务端这节课要不要翻译（「只要原文」时整条 LLM 调用都省掉）
+                self.realtime.sendText("{\"output_mode\":\"\(self.settings.outputMode.serverValue)\"}")
                 self.beginCapture()
             case .partial(_, let source, let target):
                 guard !source.isEmpty else { return }
@@ -486,7 +488,7 @@ final class ClassStore: ObservableObject {
         }
         realtime.onDisconnect = { [weak self] reason in
             guard let self, self.phase == .listening else { return }
-            self.setPhase(.failed, "实时连接断开：\(reason)")
+            self.setPhase(.failed, "实时连接断开：\(reason)。已收到的句子都还在；重新按 ⌥⌘R 即可继续，服务日志里有细节")
             self.teardownCapture()
         }
     }

@@ -247,7 +247,7 @@ func runRenderPreview(_ outputPath: String, count: Int = 3, listening: Bool = tr
     let t0 = Date()
     store.loadDemoLines(count: count, listening: listening)
 
-    let hosting = NSHostingView(rootView: ClassView(store: store, style: store.style))
+    let hosting = NSHostingView(rootView: ClassView(store: store, style: store.style, settings: store.settings))
     hosting.frame = NSRect(x: 0, y: 0, width: 780, height: 560)
     let window = NSWindow(contentRect: hosting.frame,
                           styleMask: [.titled], backing: .buffered, defer: false)
@@ -682,7 +682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             window.title = "aula · 上课"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: ClassView(store: classStore, style: captionStyle))
+            window.contentView = NSHostingView(rootView: ClassView(store: classStore, style: captionStyle, settings: settings))
             window.center()
             classWindow = window
         }

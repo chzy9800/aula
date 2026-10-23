@@ -4,6 +4,22 @@
 
 ## [未发布]
 
+### 新增：翻译输出三模式 + 录音期锁定提示 + 错误文案补全
+
+- **输出模式**：原文+译文 / 只要原文 / 只要译文。选「只要原文」时前端把
+  `output_mode=source_only` 发给服务端，worker 直接跳过翻译——省掉整条 LLM 调用，
+  不是界面层藏起来。
+- **服务端**：per-session 输出模式（模块级 dict + `live` 里的 `global` 声明，
+  连接断开时清理）。踩坑：批量脚本插入 `global` 时插到了多行签名中间，且误删了
+  重复定义——最后是按行号精确修的。
+- **录音期锁定**：听课时设置页顶部提示「转写与翻译设置将在停止后生效」
+  （对应 AirTranslate 的 `Locked during session`）。
+- **错误文案补全**：麦克风/引擎/断流/未授权四处都补了可执行的下一步，
+  不再只说"失败"。
+
+测试新增 `test_websocket_source_only_skips_translation`：发完音频立刻 flush，
+worker 真没翻的话下一条就是 `flushed`；中途冒出任何译文消息就红。
+
 ### 新增：设置窗口 / 字幕外观 / 浮窗缩放 / 语音输出 / 转录库（对齐 AirTranslate）
 
 按 `docs/airtranslate-parity-spec.md` 的 P0 一批做完，界面一致度是这轮目标。

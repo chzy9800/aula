@@ -27,6 +27,7 @@ import os
 import shutil
 import struct
 import subprocess
+import json
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -53,6 +54,8 @@ logger = logging.getLogger("aula.server")
 # 送音频；转写结果必须同时到达浏览器，用户才能看见。广播之后顺带解锁了
 # 「多屏同看」——两个标签页开着同一节课，看到的内容完全一致。
 _HUBS: Dict[str, Set[WebSocket]] = {}
+# 每节课的输出模式：bilingual（默认）/ source_only（只要原文，省掉整条翻译调用）
+_OUTPUT_MODES: Dict[str, str] = {}
 # 本机助手子进程，按 session 记账
 _CAPTURES: Dict[str, subprocess.Popen] = {}
 
@@ -444,6 +447,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
 
     @app.websocket("/ws/live")
     async def live(websocket: WebSocket, session_id: str = Query(...)) -> None:
+        global _OUTPUT_MODES   # 跨连接共享每节课的输出模式（赋值需要 global）
         await websocket.accept()
         db_path = engines.settings.db_path()
         session = store.get_session(db_path, session_id)
@@ -574,7 +578,8 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                 # 有 LLM 就走流式精译：transcript 里不带译文，译文由随后的
                 # translation_delta 逐字补上——屏幕上只有"长出来"，没有"被替换"。
                 # 没有 LLM 时才退回专用翻译接口（一次性返回，无增量）。
-                uses_llm = engines.translator.enabled
+                uses_llm = (engines.translator.enabled
+                            and _OUTPUT_MODES.get(session_id) != "source_only")
                 fallback_text = ""
                 if not uses_llm and engines.fast_mt is not None:
                     try:
@@ -697,6 +702,15 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     elif '"flush"' in text_frame:
                         await queue.join()
                         await _broadcast(session_id, {"type": "flushed"})
+                    elif '"output_mode"' in text_frame:
+                        # 仅原文模式：本会话完全不做翻译，省掉整条 LLM 调用
+                        try:
+                            parsed_frame = json.loads(text_frame)
+                        except ValueError:
+                            parsed_frame = {}
+                        mode = str(parsed_frame.get("output_mode") or "bilingual")
+                        _OUTPUT_MODES[session_id] = mode
+                        await _broadcast(session_id, {"type": "output_mode", "mode": mode})
         except WebSocketDisconnect:
             pass
         finally:
@@ -708,6 +722,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
             _HUBS.get(session_id, set()).discard(websocket)
             if not _HUBS.get(session_id):
                 _HUBS.pop(session_id, None)
+                _OUTPUT_MODES.pop(session_id, None)
 
     return app
 

@@ -7,6 +7,30 @@ import AVFoundation
 /// 与 `CaptionStyle`（外观）分开：外观是"看起来怎样"，这里是"怎么跑"。
 final class AppSettings: ObservableObject {
 
+    /// 输出模式。对应 AirTranslate 的 Transcribe-only / 双语 / 仅译文。
+    enum OutputMode: String, CaseIterable, Identifiable {
+        case bilingual, sourceOnly, translationOnly
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .bilingual: return "原文 + 译文"
+            case .sourceOnly: return "只要原文"
+            case .translationOnly: return "只要译文"
+            }
+        }
+        var note: String {
+            switch self {
+            case .bilingual: return "上课默认。原文小字在上，译文大字在下。"
+            case .sourceOnly: return "纯转写。服务端完全不做翻译，省掉整条模型调用。"
+            case .translationOnly: return "只看译文。适合已经听懂大意、只想确认中文。"
+            }
+        }
+        /// 传给服务端的值：只有「只要原文」需要让服务端省掉翻译
+        var serverValue: String { self == .sourceOnly ? "source_only" : "bilingual" }
+    }
+
+    @Published var outputMode: OutputMode { didSet { persist() } }
+
     // —— 转写 ——
     /// 段落断句静音阈值（毫秒）。对应 AirTranslate 的 `Paragraph Break Silence`
     @Published var paragraphSilenceMs: Double { didSet { persist() } }
@@ -29,6 +53,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
         paragraphSilenceMs = defaults.object(forKey: Self.prefix + "silenceMs") as? Double ?? 700
         minSpeechMs = defaults.object(forKey: Self.prefix + "minSpeechMs") as? Double ?? 350
         maxSegmentMs = defaults.object(forKey: Self.prefix + "maxSegmentMs") as? Double ?? 15000
@@ -42,6 +67,7 @@ final class AppSettings: ObservableObject {
 
     private func persist() {
         let defaults = UserDefaults.standard
+        defaults.set(outputMode.rawValue, forKey: Self.prefix + "outputMode")
         defaults.set(paragraphSilenceMs, forKey: Self.prefix + "silenceMs")
         defaults.set(minSpeechMs, forKey: Self.prefix + "minSpeechMs")
         defaults.set(maxSegmentMs, forKey: Self.prefix + "maxSegmentMs")

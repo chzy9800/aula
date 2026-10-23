@@ -106,6 +106,11 @@ final class RealtimeClient {
         }
     }
 
+    /// 发文本帧（控制消息：flush / output_mode / ping）
+    func sendText(_ json: String) {
+        task?.send(.string(json)) { _ in }
+    }
+
     func send(_ frame: Data) {
         task?.send(.data(frame)) { _ in }
     }

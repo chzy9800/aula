@@ -316,6 +316,36 @@ class ApiTest(unittest.TestCase):
             engines.fast_mt = previous_mt
             engines.translator.enabled = original_enabled
 
+    def test_websocket_source_only_skips_translation(self):
+        """「只要原文」模式：服务端完全不做翻译，省掉整条 LLM 调用。
+
+        断言手法：发完音频立刻 flush，如果 worker 真的没翻，下一个消息就是 flushed；
+        一旦中途冒出 translation_delta，这条就红。
+        """
+        sid = self.new_session()
+        pcm = b"\x00\x00" * 16000
+        header = struct.pack("<II", 0, 1000)
+
+        with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
+            self.assertEqual(ws.receive_json()["type"], "ready")
+            ws.send_text('{"output_mode":"source_only"}')
+            ack = ws.receive_json()
+            self.assertEqual(ack["type"], "output_mode")
+            self.assertEqual(ack["mode"], "source_only")
+
+            ws.send_bytes(header + pcm)
+            first = ws.receive_json()
+            self.assertEqual(first["type"], "transcript")
+            self.assertTrue(first["utterance"]["source"])
+
+            ws.send_text('{"flush":1}')
+            after = ws.receive_json()
+            self.assertEqual(after["type"], "flushed",
+                             "只要原文模式不该出现任何译文消息")
+
+        detail = self.client.get(f"/api/sessions/{sid}").json()
+        self.assertEqual(detail["utterances"][0]["target"], "", "库里也不该有译文")
+
     def test_websocket_broadcasts_to_same_session(self):
         """本机助手送音频、浏览器看结果：同一节课的两个连接都要收到转写。
 

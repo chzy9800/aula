@@ -10,6 +10,7 @@ struct ClassView: View {
     @ObservedObject var store: ClassStore
     /// 必须单独观察：嵌套在 store 里的 ObservableObject 变更不会自动传播到视图
     @ObservedObject var style: CaptionStyle
+    @ObservedObject var settings: AppSettings
 
     var body: some View {
         VStack(spacing: 0) {
@@ -152,12 +153,15 @@ struct ClassView: View {
                     Circle().fill(Color.green.opacity(0.75)).frame(width: 4, height: 4)
                 }
             }
+            if settings.outputMode != .translationOnly {
             Text(line.source)
                 .font(.system(size: style.sourceFontSize))
                 .foregroundStyle(style.sourceColor)
                 .multilineTextAlignment(style.alignment.swiftUI)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+            if settings.outputMode != .sourceOnly {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(line.target.isEmpty && line.streaming ? "…" : line.target)
                     .font(.system(size: style.fontSize))
@@ -172,6 +176,7 @@ struct ClassView: View {
                         .font(.system(size: style.fontSize - 1))
                         .foregroundStyle(style.textColor.opacity(0.5))
                 }
+            }
             }
         }
         .frame(maxWidth: .infinity, alignment: style.alignment.frameAlignment)
