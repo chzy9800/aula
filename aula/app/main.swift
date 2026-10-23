@@ -12,6 +12,7 @@
 
 import Foundation
 import AppKit
+import Combine
 import SwiftUI
 import AVFoundation
 import Carbon.HIToolbox
@@ -563,6 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var captionPanel = CaptionPanel(style: captionStyle)
     private var listenHotKey: HotKey?
     private var logItem: NSMenuItem!
+    private var iconCancellables: Set<AnyCancellable> = []
     private var captionItem: NSMenuItem!
     /// 信号源要留引用，否则被释放后 handler 不再触发
     private var signalSources: [DispatchSourceSignal] = []
@@ -590,6 +592,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 悬浮字幕窗：跟着 ClassStore 走，不自己维护数据
         captionPanel.bind(to: classStore)
 
+        // 菜单栏图标反映真实状态：空闲/录音/出错三态一眼可辨
+        classStore.$phase
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshMenuIcon() }
+            .store(in: &iconCancellables)
+        sidecar.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshMenuIcon() }
+            .store(in: &iconCancellables)
+        refreshMenuIcon()
+
         // 全局快捷键 ⌥⌘R：Carbon 注册，不要辅助功能权限。
         // 注册失败必须让人知道——常驻应用静默失去快捷键等于功能缺失。
         listenHotKey = HotKey(keyCode: kVK_ANSI_R, modifiers: HotKey.optionCommand) { [weak self] in
@@ -605,6 +618,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 常驻类应用必须给首启反馈——菜单栏图标可能被折叠进「≫」，静默启动会像没打开。
         // 首启直接开上课界面：这是用户双击后真正想看的东西，服务状态窗退到菜单里。
         showClass(nil)
+    }
+
+    /// 菜单栏图标三态。用户扫一眼就知道现在是在录、闲置、还是出了问题。
+    private func refreshMenuIcon() {
+        let symbol: String
+        switch classStore.phase {
+        case .listening, .starting:
+            symbol = "waveform.circle.fill"
+        case .failed:
+            symbol = "exclamationmark.triangle.fill"
+        case .stopping, .idle:
+            symbol = sidecar.state == .ready ? "waveform" : "waveform.slash"
+        }
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "aula")
+        image?.isTemplate = true
+        statusItem.button?.image = image
     }
 
     /// 全局热键与界面按钮共用一套判断：能停就停，能开就开，都不能就把界面亮出来说明原因。

@@ -27,18 +27,26 @@ final class VadSegmenter {
     private var lastVoice = 0
     private var clock = 0
     private var sincePartial = 0
-    private let partialMs: Double = 900
-    private let partialWindowSamples = 8000 * 16   // 最近 8 秒
+    /// 草稿间隔与草稿音频窗口：转写速度档直接控制这两个值。
+    /// 窗口越短 ASR 越快，但上下文越少、残句越多——这是"实时感 vs 准确度"的旋钮。
+    private let partialMs: Double
+    private let partialWindowSamples: Int
 
     /// 定稿段（flags=0）
     var onSegment: ((Data) -> Void)?
     /// 草稿段（flags=1）
     var onPartial: ((Data) -> Void)?
 
-    init(silenceMs: Double = 700, minSpeechMs: Double = 350, maxSegmentMs: Double = 15000) {
+    init(silenceMs: Double = 550,
+         minSpeechMs: Double = 350,
+         maxSegmentMs: Double = 15000,
+         partialMs: Double = 900,
+         partialWindowSeconds: Double = 8) {
         self.silenceMs = silenceMs
         self.minSpeechMs = minSpeechMs
         self.maxSegmentMs = maxSegmentMs
+        self.partialMs = partialMs
+        self.partialWindowSamples = Int(partialWindowSeconds * 16000)
     }
 
     func reset() {

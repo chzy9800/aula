@@ -116,7 +116,9 @@ final class ClassStore: ObservableObject {
         self.speech = speech
         self.vad = VadSegmenter(silenceMs: settings.paragraphSilenceMs,
                                 minSpeechMs: settings.minSpeechMs,
-                                maxSegmentMs: settings.maxSegmentMs)
+                                maxSegmentMs: settings.maxSegmentMs,
+                                partialMs: settings.transcriptionSpeed.partialMs,
+                                partialWindowSeconds: settings.transcriptionSpeed.partialWindowSeconds)
         wireRealtime()
         wireVad()
         wireService()
@@ -153,7 +155,9 @@ final class ClassStore: ObservableObject {
         // 每次开始都按当前设置重建：用户可能刚改过段落静音阈值
         vad = VadSegmenter(silenceMs: settings.paragraphSilenceMs,
                            minSpeechMs: settings.minSpeechMs,
-                           maxSegmentMs: settings.maxSegmentMs)
+                           maxSegmentMs: settings.maxSegmentMs,
+                           partialMs: settings.transcriptionSpeed.partialMs,
+                           partialWindowSeconds: settings.transcriptionSpeed.partialWindowSeconds)
         wireVad()
         speech.resetSession()
         guard sidecar.state == .ready else {

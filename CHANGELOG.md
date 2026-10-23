@@ -4,6 +4,27 @@
 
 ## [未发布]
 
+### 新增：转写速度三档 + 菜单栏三态
+
+把"实时感 vs 准确度"的最后一个旋钮也交给用户：
+
+| 档位 | 草稿间隔 | 草稿音频窗口 | 体感 |
+| --- | --- | --- | --- |
+| 快速 | 0.5s | 最近 4s | 首字最快，残句略多 |
+| 均衡（默认） | 0.9s | 最近 8s | 日常上课 |
+| 准确 | 1.2s | 最近 12s | 上下文最全，首字最慢 |
+
+原来 `partialMs` / `partialWindowSamples` 是 VAD 里的硬编码常量，现在提到 `VadSegmenter`
+的 init 参数，由 `AppSettings.TranscriptionSpeed` 驱动，开课时重建 VAD 生效。
+
+菜单栏图标改三态：`waveform`（就绪）/ `waveform.circle.fill`（录音中）/
+`exclamationmark.triangle.fill`（出错）/ `waveform.slash`（服务未起），订阅
+`ClassStore.$phase` 与 `Sidecar.$state` 自动刷新。
+
+配合已有的翻译双档、输出三模式，现在用户手里有 **3×2×3 = 18 种组合**，
+默认组合（均衡 + 质量优先 + 双语）是保守的，想要 AirTranslate 那种即时感就切
+「快速 + 速度优先」。
+
 ### 新增：翻译速度双档（speed / quality）——对齐全 AirTranslate 的实时感
 
 用户问「为什么跟 AirTranslate 的实时转写翻译差这么多，不能抄方案么」。实测后的答案是：

@@ -45,7 +45,43 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// 转写速度：控制"草稿多久出一次、草稿音频多长"。
+    /// 窗口越短 ASR 越快，但上下文越少、残句越多——这就是实时感与准确度的旋钮。
+    enum TranscriptionSpeed: String, CaseIterable, Identifiable {
+        case fast, balanced, accurate
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .fast: return "快速"
+            case .balanced: return "均衡"
+            case .accurate: return "准确"
+            }
+        }
+        var note: String {
+            switch self {
+            case .fast: return "草稿每 0.5 秒刷一次、只看最近 4 秒音频。首字最快，残句略多。"
+            case .balanced: return "草稿每 0.9 秒、最近 8 秒音频。日常上课用这档。"
+            case .accurate: return "草稿每 1.2 秒、最近 12 秒音频。上下文最全，首字最慢。"
+            }
+        }
+        var partialMs: Double {
+            switch self {
+            case .fast: return 500
+            case .balanced: return 900
+            case .accurate: return 1200
+            }
+        }
+        var partialWindowSeconds: Double {
+            switch self {
+            case .fast: return 4
+            case .balanced: return 8
+            case .accurate: return 12
+            }
+        }
+    }
+
     @Published var outputMode: OutputMode { didSet { persist() } }
+    @Published var transcriptionSpeed: TranscriptionSpeed { didSet { persist() } }
     @Published var translationPriority: TranslationPriority { didSet { persist() } }
 
     // —— 转写 ——
@@ -72,6 +108,7 @@ final class AppSettings: ObservableObject {
         let defaults = UserDefaults.standard
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
         translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality
+        transcriptionSpeed = TranscriptionSpeed(rawValue: defaults.string(forKey: Self.prefix + "asrSpeed") ?? "") ?? .balanced
         paragraphSilenceMs = defaults.object(forKey: Self.prefix + "silenceMs") as? Double ?? 550
         minSpeechMs = defaults.object(forKey: Self.prefix + "minSpeechMs") as? Double ?? 350
         maxSegmentMs = defaults.object(forKey: Self.prefix + "maxSegmentMs") as? Double ?? 15000
@@ -87,6 +124,7 @@ final class AppSettings: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.set(outputMode.rawValue, forKey: Self.prefix + "outputMode")
         defaults.set(translationPriority.rawValue, forKey: Self.prefix + "transPriority")
+        defaults.set(transcriptionSpeed.rawValue, forKey: Self.prefix + "asrSpeed")
         defaults.set(paragraphSilenceMs, forKey: Self.prefix + "silenceMs")
         defaults.set(minSpeechMs, forKey: Self.prefix + "minSpeechMs")
         defaults.set(maxSegmentMs, forKey: Self.prefix + "maxSegmentMs")

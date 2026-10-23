@@ -173,6 +173,18 @@ struct SettingsView: View {
 
     private var transcriptionPage: some View {
         Group {
+            settingRow("转写速度") {
+                Picker("", selection: $settings.transcriptionSpeed) {
+                    ForEach(AppSettings.TranscriptionSpeed.allCases) { speed in
+                        Text(speed.label).tag(speed)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 220)
+            }
+            hint(settings.transcriptionSpeed.note)
+            divider
             sliderRow("段落静音阈值", value: $settings.paragraphSilenceMs, range: 300...2000, unit: "ms",
                       note: "停顿多久算一句说完了。小=切得碎、上屏快；大=句子完整、等待久。")
             sliderRow("最短语音", value: $settings.minSpeechMs, range: 150...800, unit: "ms",
