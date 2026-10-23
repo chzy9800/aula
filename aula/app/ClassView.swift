@@ -1,10 +1,23 @@
 import SwiftUI
 
-/// 上课界面（B 路线的第一个用户可见成果）。
+/// 上课界面。布局与交互对照 AirTranslate 的主窗口重做过：
 ///
-/// 对应 Web 版的「上课工作区」：左边逐句双语转写，老师一句、译文一句。
-/// 原生版把草稿行做成原位覆盖的呼吸行——说话过程中先出浅色斜体，定稿转正，
-/// 精译到了再闪一下绿点，用户能看出「这句刚升级」。
+///   ┌──────────────────────────────────────────────┐
+///   │ ● 已停止    ⌘ 西班牙语 to 中文        ⌘ 转写  │  ← 工具条
+///   ├──────────────────────────────────────────────┤
+///   │              ▮▮▮▮▮▮▮▮▮▮                     │
+///   │            已准备好开始聆听                   │  ← 空态
+///   │          西班牙语 to 中文 · whisper           │
+///   │              (▶ 开始聆听)                     │
+///   │                                              │
+///   │  ┌────────────────────────────────────────┐  │
+///   │  │ ▶开始 │ Mac音频 麦克风 │ ⋯更多控制  00:12│  │  ← 悬浮控制条
+///   │  └────────────────────────────────────────┘  │
+///   └──────────────────────────────────────────────┘
+///
+/// 三处关键差异（相对旧版）：底部控制条改成**浮在内容上**的胶囊、空态居中且有
+/// 音频可视化、主操作统一成青色胶囊按钮。工具条取代了原来的大标题 header——
+/// 上课时视线在字幕上，标题占地方。
 struct ClassView: View {
 
     @ObservedObject var store: ClassStore
@@ -12,80 +25,182 @@ struct ClassView: View {
     @ObservedObject var style: CaptionStyle
     @ObservedObject var settings: AppSettings
 
+    /// 菜单动作由外层注入：ClassView 不该知道窗口怎么开
+    var onOpenSettings: () -> Void = {}
+    var onToggleCaptions: () -> Void = {}
+    var onDiagnose: () -> Void = {}
+
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().opacity(0.3)
-            transcript
-            Divider().opacity(0.3)
-            footer
+            toolbar
+            Divider().opacity(0.22)
+            ZStack(alignment: .bottom) {
+                transcript
+                controlBar
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 18)
+            }
         }
-        .frame(minWidth: 700, minHeight: 480)
+        .frame(minWidth: 760, minHeight: 540)
         .background(background)
         .sheet(isPresented: $store.showDigestSheet) {
             DigestSheet(store: store)
         }
     }
 
-    // MARK: - 顶栏
+    // MARK: - 工具条
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(store.sessionTitle.isEmpty ? "aula · 课堂到笔记" : store.sessionTitle)
-                    .font(.system(size: 16, weight: .semibold))
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(store.phase == .failed ? Color.red : Color.secondary)
-                    .lineLimit(2)
+    private var toolbar: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 7, height: 7)
+                Text(statusLabel)
+                    .font(.system(size: 12, weight: .medium))
             }
-            Spacer(minLength: 12)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.primary.opacity(0.055)))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.07)))
+
+            HStack(spacing: 5) {
+                Image(systemName: "character.book.closed")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text("西班牙语 to 中文")
+                    .font(.system(size: 12, weight: .medium))
+            }
+
+            Spacer(minLength: 8)
 
             if store.phase == .listening {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 7, height: 7)
-                        .opacity(0.9)
-                    Text(store.elapsedLabel)
-                        .font(.system(size: 14, weight: .medium).monospacedDigit())
-                }
-                Button("停止") { store.stop() }
-                    .keyboardShortcut(".", modifiers: .command)
-            } else {
-                // 听课时不许切音源：半路换来源会让前后句子归到不同声源上，
-                // 而且换源要重建流——与 Web 版「录音期间禁止切换课堂」同一口径。
-                Picker("", selection: $store.sourceKind) {
-                    ForEach(ClassStore.SourceKind.allCases) { kind in
-                        Text(kind.label).tag(kind)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 168)
-                .help(store.sourceKind.hint)
-
-                Button("开始听课") { store.start() }
-                    .keyboardShortcut("r", modifiers: [.command, .option])
-                    .disabled(!store.canStart)
-                    .help(store.canStart ? store.sourceKind.hint : "服务未就绪")
+                Text(store.elapsedLabel)
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
+
+            HStack(spacing: 5) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 10))
+                Text(store.asrLabel.isEmpty ? "未连接" : store.asrLabel)
+                    .font(.system(size: 11.5, weight: .medium))
+            }
+            .foregroundStyle(Theme.teal)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Theme.teal.opacity(0.12)))
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
-    /// 顶栏副标题：空闲时显示服务状态（它自己会变），听课时显示转写进度。
-    private var subtitle: String {
+    private var statusLabel: String {
         switch store.phase {
-        case .listening, .starting, .stopping:
-            return store.statusText
-        case .failed:
-            return store.lastError.isEmpty ? store.statusText : store.lastError
-        case .idle:
-            return store.serviceStatus
+        case .listening: return "正在聆听"
+        case .starting: return "启动中"
+        case .stopping: return "收尾中"
+        case .failed: return "出错了"
+        case .idle: return store.serviceReady ? "已停止" : "服务启动中"
         }
+    }
+
+    private var statusColor: Color {
+        switch store.phase {
+        case .listening: return .red
+        case .starting, .stopping: return .orange
+        case .failed: return .orange
+        case .idle: return store.serviceReady ? Color.secondary : Color.orange
+        }
+    }
+
+    // MARK: - 悬浮控制条
+
+    private var controlBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                if store.canStop { store.stop() } else if store.canStart { store.start() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: store.canStop ? "stop.fill" : "play.fill")
+                        .font(.system(size: 10.5, weight: .bold))
+                    Text(store.canStop ? "停止" : "开始")
+                        .font(.system(size: 12.5, weight: .semibold))
+                }
+                .padding(.horizontal, 17)
+                .padding(.vertical, 8)
+                .foregroundStyle(.white)
+                .background(Capsule().fill(store.canStart || store.canStop
+                                           ? Theme.teal : Theme.teal.opacity(0.4)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!store.canStart && !store.canStop)
+            .keyboardShortcut("r", modifiers: [.command, .option])
+
+            sourceSegment
+
+            Menu {
+                Button("生成听课记录") {
+                    store.showDigestSheet = true
+                    store.makeDigest()
+                }
+                .disabled(!store.canMakeDigest)
+                Button("字幕浮窗") { onToggleCaptions() }
+                Button("音频诊断…") { onDiagnose() }
+                Divider()
+                Button("设置…") { onOpenSettings() }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "ellipsis").font(.system(size: 11))
+                    Text("更多控制").font(.system(size: 12))
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+
+            Spacer(minLength: 6)
+
+            Text("\(store.lines.count) 句")
+                .font(.system(size: 11.5).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.trailing, 6)
+        }
+        .padding(7)
+        .background(
+            Capsule()
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.09), radius: 12, y: 4)
+        )
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.16)))
+    }
+
+    /// 音源分段：选中项用不透明底色凸起，未选中透明——和 AirTranslate 底栏一致
+    private var sourceSegment: some View {
+        HStack(spacing: 1) {
+            ForEach([ClassStore.SourceKind.systemAudio, .microphone]) { kind in
+                Button {
+                    if store.phase == .idle { store.sourceKind = kind }
+                } label: {
+                    Text(kind.shortLabel)
+                        .font(.system(size: 12, weight: store.sourceKind == kind ? .semibold : .regular))
+                        .foregroundStyle(store.sourceKind == kind ? Color.primary : Color.secondary)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(store.sourceKind == kind
+                                           ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(store.phase != .idle)
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(Color.primary.opacity(0.06)))
+        .help(store.sourceKind.hint)
     }
 
     // MARK: - 逐句列表
@@ -99,15 +214,16 @@ struct ClassView: View {
                     }
                     ForEach(store.lines) { line in
                         row(line)
+                            .id(line.id)
                     }
                     if let draft = store.draft {
                         draftRow(draft)
+                            .id(-1)
                     }
-                    Color.clear.frame(height: 1).id("bottom")
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 26)
-                .padding(.bottom, 16)
+                .padding(.horizontal, 22)
+                .padding(.top, 22)
+                .padding(.bottom, 96)      // 给悬浮控制条留出空间
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onChange(of: store.lines.count) { _ in
@@ -133,24 +249,31 @@ struct ClassView: View {
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.2)) {
-            proxy.scrollTo("bottom", anchor: .bottom)
+        withAnimation(.easeOut(duration: 0.18)) {
+            if let last = store.lines.last {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            } else {
+                proxy.scrollTo(-1, anchor: .bottom)
+            }
         }
     }
 
     private func row(_ line: ClassStore.Line) -> some View {
         VStack(alignment: style.alignment.horizontal, spacing: 5) {
             HStack(spacing: 7) {
-                Text(line.timeLabel)
-                    .font(.system(size: 10).monospacedDigit())
+                Text(stamp(line.at))
+                    .font(.system(size: 9.5).monospacedDigit())
                     .foregroundStyle(.tertiary)
                 if line.latencyMs > 0 {
                     Text("\(line.latencyMs)ms")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 9.5).monospacedDigit())
+                        .foregroundStyle(.quaternary)
                 }
                 if line.refined {
-                    Circle().fill(Color.green.opacity(0.75)).frame(width: 4, height: 4)
+                    Circle()
+                        .fill(Color.green.opacity(0.55))
+                        .frame(width: 4, height: 4)
+                        .help("这句已由大模型精译")
                 }
             }
             if settings.outputMode != .translationOnly {
@@ -182,82 +305,121 @@ struct ClassView: View {
         .frame(maxWidth: .infinity, alignment: style.alignment.frameAlignment)
     }
 
-    /// 草稿行：浅色斜体 + 呼吸。逐帧覆盖同一位置，不追加——否则会刷出一堆半句。
+    /// 草稿行：浅色斜体，表示"还在说，别当真"
     private func draftRow(_ draft: ClassStore.Line) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Text("●").font(.system(size: 7)).foregroundStyle(.orange)
-                Text("识别中").font(.system(size: 10)).foregroundStyle(.tertiary)
+        VStack(alignment: style.alignment.horizontal, spacing: 5) {
+            if settings.outputMode != .translationOnly {
+                Text(draft.source)
+                    .font(.system(size: style.sourceFontSize))
+                    .italic()
+                    .foregroundStyle(style.sourceColor.opacity(0.75))
+                    .multilineTextAlignment(style.alignment.swiftUI)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text(draft.source)
-                .font(.system(size: 12).italic())
-                .foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(draft.target.isEmpty ? "…" : draft.target)
-                .font(.system(size: 15).italic())
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if settings.outputMode != .sourceOnly, !draft.target.isEmpty {
+                Text(draft.target)
+                    .font(.system(size: style.fontSize))
+                    .italic()
+                    .foregroundStyle(style.textColor.opacity(0.8))
+                    .multilineTextAlignment(style.alignment.swiftUI)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: style.alignment.frameAlignment)
         .opacity(0.85)
         .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: draft.source)
     }
 
+    // MARK: - 空态
+
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("准备好了")
-                .font(.system(size: 15, weight: .medium))
-            Text("选好声音来源，点「开始听课」（⌥⌘R）。老师说的每句话会在这里逐句出现：\n先出原文，再出粗译，精译到了覆盖并闪一下绿点。")
-                .font(.system(size: 12))
+        VStack(spacing: 15) {
+            AudioBars()
+
+            Text("已准备好开始聆听")
+                .font(.system(size: 28, weight: .semibold))
+
+            Text("西班牙语 to 中文" + (store.asrLabel.isEmpty ? "" : " · \(store.asrLabel)"))
+                .font(.system(size: 12.5))
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                store.start()
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "play.fill").font(.system(size: 11, weight: .bold))
+                    Text("开始聆听").font(.system(size: 13.5, weight: .semibold))
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 11)
+                .foregroundStyle(.white)
+                .background(Capsule().fill(store.canStart ? Theme.teal : Theme.teal.opacity(0.4)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!store.canStart)
+            .padding(.top, 2)
+
             Text(store.sourceKind.hint)
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 440)
+
             if let hint = serviceHint {
                 Text(hint)
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 440)
             }
         }
-        .padding(.top, 28)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 420)
+        .padding(.bottom, 40)
     }
 
     private var serviceHint: String? {
         if store.phase == .failed { return store.lastError.isEmpty ? nil : store.lastError }
-        if !store.canStart && store.lines.isEmpty { return "服务正在启动，稍等一下…" }
+        if !store.canStart && store.lines.isEmpty && !store.serviceReady { return "服务正在启动，稍等一下…" }
         return nil
     }
 
-    // MARK: - 底栏
-
-    private var footer: some View {
-        HStack(spacing: 12) {
-            Text(store.asrLabel.isEmpty ? "转写未连接" : "转写 \(store.asrLabel)")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            Spacer()
-            Text("\(store.lines.count) 句")
-                .font(.system(size: 10).monospacedDigit())
-                .foregroundStyle(.tertiary)
-            if store.canMakeDigest {
-                Button("生成听课记录") {
-                    store.showDigestSheet = true
-                    store.makeDigest()
-                }
-                .controlSize(.small)
-                .help("把整节课压成带 frontmatter 的 Markdown")
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
-    }
-
     private var background: some View {
-        // 玻璃拟态：SwiftUI 的 material 已含 saturate，比手调 CSS 省事
         ZStack {
             Rectangle().fill(.ultraThinMaterial)
+        }
+    }
+
+    private func stamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - 主题与装饰
+
+enum Theme {
+    /// 主色取自 AirTranslate 的主按钮（青绿），整站只用这一个强调色
+    static let teal = Color(red: 0.29, green: 0.60, blue: 0.62)
+}
+
+/// 空态的音频可视化：一排会呼吸的竖条。
+/// 用 TimelineView 驱动，不需要 @State（本机没有 SwiftUI 宏插件）。
+private struct AudioBars: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 12.0)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(0..<14, id: \.self) { index in
+                    let phase = t * 2.1 + Double(index) * 0.55
+                    let height = 6 + abs(sin(phase)) * 22
+                    Capsule()
+                        .fill(Theme.teal.opacity(0.5))
+                        .frame(width: 3, height: height)
+                }
+            }
+            .frame(height: 30)
         }
     }
 }

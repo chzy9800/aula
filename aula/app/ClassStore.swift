@@ -45,6 +45,13 @@ final class ClassStore: ObservableObject {
             case .systemAudio: return "系统声音"
             }
         }
+        /// 控制条上的短名，对齐 AirTranslate 的「Mac 音频 / 麦克风」
+        var shortLabel: String {
+            switch self {
+            case .microphone: return "麦克风"
+            case .systemAudio: return "Mac 音频"
+            }
+        }
         var hint: String {
             switch self {
             case .microphone: return "老师现场讲课，或你戴耳机听网课"

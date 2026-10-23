@@ -722,7 +722,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             window.title = "aula · 上课"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: ClassView(store: classStore, style: captionStyle, settings: settings))
+            window.contentView = NSHostingView(rootView: ClassView(store: classStore, style: captionStyle, settings: settings,
+                                          onOpenSettings: { [weak self] in self?.showSettings(nil) },
+                                          onToggleCaptions: { [weak self] in self?.toggleCaptions(nil) },
+                                          onDiagnose: { [weak self] in self?.runAudioDiagnosis(nil) }))
             window.center()
             classWindow = window
         }
