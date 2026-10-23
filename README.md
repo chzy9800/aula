@@ -93,6 +93,10 @@ aula --asr-provider whisper --asr-model small --open
 
 ![原生上课界面](docs/screenshot-native-class.png)
 
+下课点「生成听课记录」，把整节课压成带 frontmatter 的 Markdown，复制或存成 `.md`：
+
+![听课记录](docs/screenshot-native-digest.png)
+
 ```bash
 bash scripts/make_sign_cert.sh          # 一次性：生成自签证书（重编译不丢屏幕录制权限）
 bash scripts/build_app.sh               # 打包并安装到 ~/Applications
