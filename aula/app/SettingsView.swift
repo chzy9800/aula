@@ -120,12 +120,12 @@ struct SettingsView: View {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 7)
-                            .fill(model.category == category ? Color.accentColor.opacity(0.18) : Color.clear)
+                            .fill(model.category == category ? Theme.teal.opacity(0.16) : Color.clear)
                     )
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(model.category == category ? Color.accentColor : Color.primary)
+                .foregroundStyle(model.category == category ? Theme.teal : Color.primary)
             }
             Spacer()
         }
@@ -261,7 +261,7 @@ struct SettingsView: View {
                         .padding(6)
                         .background(RoundedRectangle(cornerRadius: 7)
                             .fill(style.activePresetID == preset.id
-                                  ? Color.accentColor.opacity(0.15) : Color.clear))
+                                  ? Theme.teal.opacity(0.15) : Color.clear))
                     }
                     .buttonStyle(.plain)
                     .help(preset.name)

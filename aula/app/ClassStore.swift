@@ -66,6 +66,10 @@ final class ClassStore: ObservableObject {
     /// 不能等用户碰一下控件才重绘。
     @Published private(set) var serviceStatus = "服务启动中…"
     @Published private(set) var serviceReady = false
+    /// 真实语言对（来自 /api/health），空态副标题用它而不是硬编码
+    @Published private(set) var languagePair = "西班牙语 to 中文"
+    /// 服务端配置的转写 provider，就绪后立刻可显示（不必等 WebSocket）
+    @Published private(set) var healthAsr = ""
     @Published private(set) var lines: [Line] = []
     @Published private(set) var draft: Line?
     @Published private(set) var statusText = "未开始"
@@ -142,6 +146,7 @@ final class ClassStore: ObservableObject {
                 switch state {
                 case .ready:
                     self.serviceStatus = "服务就绪 · 选好声音来源后按 ⌥⌘R 开始"
+                    self.refreshHealth()
                 case .starting:
                     self.serviceStatus = "服务启动中…"
                 case .stopping:
@@ -380,6 +385,50 @@ final class ClassStore: ObservableObject {
             AppLog.write("sysaudio: 捕获中断 \(message)")
             self.setPhase(.failed, message)
             self.teardownCapture()
+        }
+    }
+
+    /// 拉一次健康信息：语言对与 provider 在开课前就该显示出来。
+    /// 同步网络调用，必须离开主线程，否则界面会卡在启动那一秒。
+    private func refreshHealth() {
+        let url = baseURL + "/api/health"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let health = Sidecar.getAny(url) as? [String: Any] else { return }
+            var pair: String?
+            var asrLabel: String?
+            if let asr = health["asr"] as? [String: Any] {
+                let provider = (asr["provider"] as? String) ?? ""
+                let model = (asr["model"] as? String) ?? ""
+                if !provider.isEmpty {
+                    asrLabel = model.isEmpty ? provider : "\(provider)/\(model)"
+                }
+            }
+            if let translate = health["translate"] as? [String: Any] {
+                let src = Self.languageName(translate["source_lang"] as? String)
+                let dst = Self.languageName(translate["target_lang"] as? String)
+                pair = "\(src) to \(dst)"
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let pair { self.languagePair = pair }
+                if let asrLabel { self.healthAsr = asrLabel }
+            }
+        }
+    }
+
+    static func languageName(_ code: String?) -> String {
+        switch (code ?? "").lowercased() {
+        case "es": return "西班牙语"
+        case "zh": return "中文"
+        case "en": return "英语"
+        case "fr": return "法语"
+        case "de": return "德语"
+        case "it": return "意大利语"
+        case "pt": return "葡萄牙语"
+        case "ja": return "日语"
+        case "ko": return "韩语"
+        case "ru": return "俄语"
+        default: return (code ?? "").isEmpty ? "未知语言" : (code ?? "").uppercased()
         }
     }
 

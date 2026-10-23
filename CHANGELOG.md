@@ -4,6 +4,19 @@
 
 ## [未发布]
 
+### 修复与优化：语言对/provider 取真值、深色适配、强调色统一
+
+- **空态不再显示「未连接」**：`ClassStore` 在服务就绪时拉一次 `/api/health`，
+  把真实语言对（`es → zh` → 「西班牙语 to 中文」）和 provider（`whisper/small`）
+  取出来。之前这两处是硬编码的。
+- **深色模式适配**：青色主色改为 dynamic color——深色下提亮到 `#6BC2C7`，
+  原色在深底上会糊。分段控件选中项也从 `controlBackgroundColor` 改成
+  亮白半透明（深色下前者和背景几乎同色，看不出选中）。
+- **强调色统一**：设置窗口的侧边栏选中、预设色块高亮，转录库的选中行，
+  全部从系统 `accentColor` 换成 `Theme.teal`——一个产品只该有一个强调色。
+
+新增 `--render-preview <png> <n> dark` 自检参数，深色布局不用手动切系统外观。
+
 ### 变更：主界面按 AirTranslate 的样式重做
 
 拿不到它的设计稿，就用 ScreenCaptureKit 截了它的真实窗口（900×612）做对照，

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// 上课界面。布局与交互对照 AirTranslate 的主窗口重做过：
 ///
@@ -68,7 +69,7 @@ struct ClassView: View {
                 Image(systemName: "character.book.closed")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Text("西班牙语 to 中文")
+                Text(store.languagePair)
                     .font(.system(size: 12, weight: .medium))
             }
 
@@ -83,7 +84,7 @@ struct ClassView: View {
             HStack(spacing: 5) {
                 Image(systemName: "waveform")
                     .font(.system(size: 10))
-                Text(store.asrLabel.isEmpty ? "未连接" : store.asrLabel)
+                Text(providerLabel)
                     .font(.system(size: 11.5, weight: .medium))
             }
             .foregroundStyle(Theme.teal)
@@ -93,6 +94,13 @@ struct ClassView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
+    }
+
+    /// 优先用 WebSocket 的 asrLabel；还没连上时用 health 里的值，别显示"未连接"
+    private var providerLabel: String {
+        if !store.asrLabel.isEmpty { return store.asrLabel }
+        if !store.healthAsr.isEmpty { return store.healthAsr }
+        return store.serviceReady ? "未连接" : "启动中"
     }
 
     private var statusLabel: String {
@@ -191,7 +199,7 @@ struct ClassView: View {
                         .padding(.vertical, 6)
                         .background(
                             Capsule().fill(store.sourceKind == kind
-                                           ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+                                           ? Theme.segmentSelected : Color.clear)
                         )
                 }
                 .buttonStyle(.plain)
@@ -339,7 +347,7 @@ struct ClassView: View {
             Text("已准备好开始聆听")
                 .font(.system(size: 28, weight: .semibold))
 
-            Text("西班牙语 to 中文" + (store.asrLabel.isEmpty ? "" : " · \(store.asrLabel)"))
+            Text(store.languagePair + (providerLabel.isEmpty ? "" : " · \(providerLabel)"))
                 .font(.system(size: 12.5))
                 .foregroundStyle(.secondary)
 
@@ -400,8 +408,22 @@ struct ClassView: View {
 // MARK: - 主题与装饰
 
 enum Theme {
-    /// 主色取自 AirTranslate 的主按钮（青绿），整站只用这一个强调色
-    static let teal = Color(red: 0.29, green: 0.60, blue: 0.62)
+    /// 主色取自 AirTranslate 的主按钮（青绿），整站只用这一个强调色。
+    /// 深色模式要提亮一档——原色在深背景上会糊成一团，对比度不够。
+    static let teal = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDark
+            ? NSColor(srgbRed: 0.42, green: 0.76, blue: 0.78, alpha: 1)
+            : NSColor(srgbRed: 0.29, green: 0.60, blue: 0.62, alpha: 1)
+    })
+
+    /// 分段控件选中项的底色。浅色下是白色凸起（比背景亮），
+    /// 深色下 `controlBackgroundColor` 会和背景糊在一起，改用亮白半透明。
+    static let segmentSelected = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1.0, alpha: 0.18)
+            : NSColor.white
+    })
 }
 
 /// 空态的音频可视化：一排会呼吸的竖条。

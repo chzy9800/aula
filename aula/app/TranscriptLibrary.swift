@@ -236,7 +236,7 @@ struct TranscriptLibraryView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(RoundedRectangle(cornerRadius: 8)
-            .fill(selected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)))
+            .fill(selected ? Theme.teal.opacity(0.12) : Color.primary.opacity(0.04)))
         .contentShape(Rectangle())
         .onTapGesture { model.selected = session.id }
     }

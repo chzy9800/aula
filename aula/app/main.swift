@@ -258,6 +258,9 @@ func runRenderPreview(_ outputPath: String, count: Int = 3, listening: Bool = tr
     store.loadDemoLines(count: count, listening: listening)
 
     let hosting = NSHostingView(rootView: ClassView(store: store, style: store.style, settings: store.settings))
+    if ProcessInfo.processInfo.arguments.contains("dark") {
+        hosting.appearance = NSAppearance(named: .darkAqua)
+    }
     hosting.frame = NSRect(x: 0, y: 0, width: 780, height: 560)
     let window = NSWindow(contentRect: hosting.frame,
                           styleMask: [.titled], backing: .buffered, defer: false)
