@@ -256,6 +256,13 @@ struct ClassView: View {
         }
     }
 
+    /// 空译文有两种含义：还在流式（显示省略号）/ 模型弃权（显示"未译"）。
+    /// 后者必须可见——让人知道"这句没翻"而不是以为界面卡了。
+    private func displayTarget(_ line: ClassStore.Line) -> String {
+        if !line.target.isEmpty { return line.target }
+        return line.streaming ? "…" : "（未译：原文识别不清）"
+    }
+
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.18)) {
             if let last = store.lines.last {
@@ -294,9 +301,11 @@ struct ClassView: View {
             }
             if settings.outputMode != .sourceOnly {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(line.target.isEmpty && line.streaming ? "…" : line.target)
+                Text(displayTarget(line))
                     .font(.system(size: style.fontSize))
-                    .foregroundStyle(style.textColor)
+                    .foregroundStyle(line.target.isEmpty && !line.streaming
+                                     ? Color.secondary : style.textColor)
+                    .italic(line.target.isEmpty && !line.streaming)
                     .multilineTextAlignment(style.alignment.swiftUI)
                     .outlinedIfNeeded(style.outline)
                     .textSelection(.enabled)

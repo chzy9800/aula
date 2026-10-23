@@ -42,7 +42,7 @@ from .asr import ASRError, TimedASR, build_asr
 from .llm import LLMClient, LLMError, client_for
 from .summarize import summarize
 from .transcript import BilingualTurn
-from .translate import Translator
+from .translate import ABSTAIN, Translator
 
 STATIC_DIR = Path(__file__).parent / "static"
 HELPER_SOURCE = Path(__file__).parent / "helpers" / "main.swift"
@@ -738,6 +738,12 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                             translated = ""
                     else:
                         translated = await stream_translate(text, record["seq"])
+                    if translated and ABSTAIN in translated:
+                        # 模型弃权：把已推出去的增量作废，让界面显示"未译"
+                        logger.info("翻译弃权（seq=%s）：%s", record["seq"], text[:40])
+                        translated = ""
+                        await _broadcast(session_id,
+                                         {"type": "translation", "seq": record["seq"], "target": ""})
                     if translated:
                         store.set_translation(db_path, session_id, record["seq"], translated)
                         # speed 模式下先显示的是 MT 译文：精译与它太像就别替换，
