@@ -81,10 +81,15 @@ final class ClassStore: ObservableObject {
     private let systemAudio = SystemAudioSource()
     private var converter: AVAudioConverter?
     private var micTapInstalled = false
+    private var micChunks = 0
+    private var micPeak = 0
     private var sessionId: String?
     private var startedAt: Date?
     private var timer: Timer?
     private let draftKey = -1
+    /// 诊断计数（VAD 触发次数）——只在诊断里读
+    private(set) var segmentCount = 0
+    private(set) var partialCount = 0
 
     var baseURL: String { sidecar.baseURL }
     var canStart: Bool { sidecar.state == .ready && (phase == .idle || phase == .failed) }
@@ -200,6 +205,12 @@ final class ClassStore: ObservableObject {
         }
         guard output.frameLength > 0, let channel = output.int16ChannelData else { return }
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(output.frameLength)))
+        // 与系统声音路径同口径的统计：mic 全静音也是常见故障（静音键、选错输入设备）
+        micChunks += 1
+        micPeak = max(micPeak, chunk.reduce(0) { max($0, abs(Int($1))) })
+        if micChunks % 40 == 0 {
+            AppLog.write("mic: chunks=\(micChunks) peak=\(micPeak) srcRate=\(Int(buffer.format.sampleRate))")
+        }
         vad.feed(samples: chunk)
     }
 
@@ -237,9 +248,11 @@ final class ClassStore: ObservableObject {
 
     private func wireVad() {
         vad.onSegment = { [weak self] frame in
+            self?.segmentCount += 1
             self?.realtime.send(frame)
         }
         vad.onPartial = { [weak self] frame in
+            self?.partialCount += 1
             self?.realtime.send(frame)
         }
         // 系统声音与麦克风走同一个 VAD，切句口径一致
@@ -248,8 +261,69 @@ final class ClassStore: ObservableObject {
         }
         systemAudio.onFailure = { [weak self] message in
             guard let self, self.phase == .listening || self.phase == .starting else { return }
+            AppLog.write("sysaudio: 捕获中断 \(message)")
             self.setPhase(.failed, message)
             self.teardownCapture()
+        }
+    }
+
+    // MARK: - 音频诊断
+
+    /// 诊断「系统声音识别不出」：分清是没有数据、数据全静音、还是 VAD 没触发。
+    /// 三种情况修法完全不同，不能靠猜。
+    /// 用独立的 VAD 实例统计，避免污染正式链路的切句状态。
+    func diagnoseSystemAudio(seconds: Double = 6, completion: @escaping (String) -> Void) {
+        guard phase == .idle || phase == .failed else {
+            completion("正在听课／收尾中，先停止再诊断。")
+            return
+        }
+        let permission = SystemAudioSource.hasPermission()
+        AppLog.write("诊断: 开始 \(Int(seconds))s，屏幕录制权限=\(permission ? "有" : "无")")
+
+        let box = StatsBox()
+        let probeVad = VadSegmenter()
+        probeVad.onSegment = { _ in box.bump(segments: 1) }
+        probeVad.onPartial = { _ in box.bump(partials: 1) }
+        systemAudio.onSamples = { samples in probeVad.feed(samples: samples) }
+
+        Task {
+            do {
+                try await systemAudio.start()
+            } catch {
+                wireVad()
+                await MainActor.run { completion("启动失败：\(error.localizedDescription)") }
+                return
+            }
+            try? await Task.sleep(nanoseconds: UInt64(max(1, seconds) * 1_000_000_000))
+            systemAudio.stop()
+            wireVad()   // 恢复正式接线
+
+            let samples = systemAudio.sampleCount
+            let peak = systemAudio.peak
+            let chunks = systemAudio.chunkCount
+            let stats = box.snapshot()
+            var lines: [String] = []
+            lines.append("屏幕录制权限：\(permission ? "有" : "无")")
+            lines.append("音频格式：\(systemAudio.formatDescription.isEmpty ? "未收到音频" : systemAudio.formatDescription)")
+            lines.append(String(format: "样本：%d（≈%.1f 秒）  块数：%d", samples, Double(samples) / 16000, chunks))
+            lines.append("峰值：\(peak)")
+            lines.append("VAD 触发：\(stats.segments) 段 / \(stats.partials) 次草稿")
+            lines.append("")
+            if samples == 0 {
+                lines.append("→ 一个样本都没收到：多半是屏幕录制权限没生效。")
+                lines.append("  批过权限后 macOS 一般要求**退出并重新打开 app** 才真正放行音频。")
+            } else if peak == 0 {
+                lines.append("→ 有数据但全程静音：这就是「权限已给、音频未放行」的典型症状。")
+                lines.append("  到 系统设置 → 隐私与安全性 → 屏幕录制 里把 aula 关掉再打开，然后重启 app。")
+            } else if stats.segments == 0 {
+                lines.append("→ 有声音但 VAD 没切出句子：可能是音量太低（峰值 \(peak)，低于触发阈值）。")
+                lines.append("  把系统音量调大一些再试，或改用「麦克风」。")
+            } else {
+                lines.append("→ 捕获与断句都正常（\(stats.segments) 段），问题应在转写/翻译环节，看 sidecar 日志。")
+            }
+            let report = lines.joined(separator: "\n")
+            AppLog.write("诊断完成:\n\(report)")
+            await MainActor.run { completion(report) }
         }
     }
 
@@ -407,5 +481,25 @@ final class ClassStore: ObservableObject {
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "M月d日 HH:mm 课堂"
         return f.string(from: Date())
+    }
+}
+
+/// 跨线程计数（音频线程写、主线程读）
+final class StatsBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var segments = 0
+    private var partials = 0
+
+    func bump(segments: Int = 0, partials: Int = 0) {
+        lock.lock()
+        self.segments += segments
+        self.partials += partials
+        lock.unlock()
+    }
+
+    func snapshot() -> (segments: Int, partials: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (segments, partials)
     }
 }

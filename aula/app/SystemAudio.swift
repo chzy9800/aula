@@ -38,6 +38,10 @@ final class SystemAudioSource: NSObject, SCStreamOutput, SCStreamDelegate {
     /// 首次收到音频时记录实际格式，排查「有流但全静音」用
     private(set) var formatDescription: String = ""
     private(set) var seenFormatIDs: Set<String> = []
+    /// 捕获统计（诊断用）：样本数、块数、峰值
+    private(set) var sampleCount = 0
+    private(set) var chunkCount = 0
+    private(set) var peak: Int = 0
 
     /// 只查不弹窗。用户在设置里能自己看到状态。
     static func hasPermission() -> Bool {
@@ -51,10 +55,21 @@ final class SystemAudioSource: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func start() async throws {
-        guard Self.hasPermission() || Self.requestPermission() else {
+        let granted = Self.hasPermission()
+        AppLog.write("sysaudio: 屏幕录制权限=\(granted ? "有" : "无")")
+        guard granted || Self.requestPermission() else {
+            AppLog.write("sysaudio: 权限被拒，放弃捕获")
             throw CaptureError.denied
         }
+        if !granted && Self.hasPermission() {
+            // 首次授权后 macOS 需要重启进程才真正放行音频——不重启会拿到静音流
+            AppLog.write("sysaudio: 刚拿到授权，本次可能仍为静音（系统通常要求重启应用）")
+        }
+        sampleCount = 0
+        chunkCount = 0
+        peak = 0
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        AppLog.write("sysaudio: 可共享内容 displays=\(content.displays.count) windows=\(content.windows.count)")
         // 音频是系统混音，过滤器只决定视频画面取哪块屏。优先整屏；
         // 显示器列表为空（某些虚拟显示环境）时回退到按窗口捕获。
         let filter: SCContentFilter
@@ -81,6 +96,7 @@ final class SystemAudioSource: NSObject, SCStreamOutput, SCStreamDelegate {
         srcRate = 0
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
         try await stream.startCapture()
+        AppLog.write("sysaudio: startCapture 成功")
     }
 
     func stop() {
@@ -186,7 +202,17 @@ final class SystemAudioSource: NSObject, SCStreamOutput, SCStreamDelegate {
             let clamped = max(-1.0, min(1.0, value))
             return Int16((clamped < 0 ? clamped * 32768.0 : clamped * 32767.0).rounded())
         }
-        if !int16s.isEmpty { onSamples?(int16s) }
+        if !int16s.isEmpty {
+            let localPeak = int16s.reduce(0) { max($0, abs(Int($1))) }
+            sampleCount += int16s.count
+            chunkCount += 1
+            peak = max(peak, localPeak)
+            // 每 2 秒记一次：能看出"有流但一直静音"，这是权限问题的典型症状
+            if chunkCount % 40 == 0 {
+                AppLog.write("sysaudio: chunks=\(chunkCount) samples=\(sampleCount) peak=\(peak) srcRate=\(Int(srcRate))")
+            }
+            onSamples?(int16s)
+        }
     }
 
     private static func linearResample(_ input: [Double], from: Double, to: Double) -> [Double] {

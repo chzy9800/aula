@@ -597,13 +597,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(withTitle: "上课界面", action: #selector(showClass(_:)), keyEquivalent: "1")
             .target = self
-        captionItem = menu.addItem(withTitle: "显示字幕浮窗", action: #selector(toggleCaptions(_:)), keyEquivalent: "l")
+        captionItem = menu.addItem(withTitle: "显示字幕浮窗", action: #selector(toggleCaptions(_:)), keyEquivalent: "2")
         captionItem.target = self
-        menu.addItem(withTitle: "显示服务状态", action: #selector(showStatus(_:)), keyEquivalent: "s")
+        menu.addItem(withTitle: "显示服务状态", action: #selector(showStatus(_:)), keyEquivalent: "3")
             .target = self
-        menu.addItem(withTitle: "重启服务", action: #selector(restartSidecar(_:)), keyEquivalent: "r")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "音频诊断…", action: #selector(runAudioDiagnosis(_:)), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "打开 sidecar 日志", action: #selector(openLog(_:)), keyEquivalent: "l")
+        menu.addItem(withTitle: "打开应用日志", action: #selector(openAppLog(_:)), keyEquivalent: "")
+            .target = self
+        menu.addItem(withTitle: "打开服务日志", action: #selector(openLog(_:)), keyEquivalent: "")
+            .target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "重启服务", action: #selector(restartSidecar(_:)), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出 aula", action: #selector(quit(_:)), keyEquivalent: "q")
@@ -633,6 +639,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleCaptions(_ sender: Any?) {
         captionPanel.toggle()
         captionItem.title = captionPanel.visible ? "隐藏字幕浮窗" : "显示字幕浮窗"
+    }
+
+    /// 音频诊断：先讲清要做什么，再跑 6 秒捕获，最后按结果给出可执行的下一步。
+    /// 用户报「系统声音识别不出」时，这一个入口能把三种原因分开。
+    @objc private func runAudioDiagnosis(_ sender: Any?) {
+        let intro = NSAlert()
+        intro.messageText = "音频诊断"
+        intro.informativeText = """
+        接下来 6 秒会捕获系统声音。
+        请让电脑播放点声音（网课、视频、音乐都行），然后点「开始」。
+        """
+        intro.addButton(withTitle: "开始")
+        intro.addButton(withTitle: "取消")
+        guard intro.runModal() == .alertFirstButtonReturn else { return }
+
+        classStore.diagnoseSystemAudio(seconds: 6) { [weak self] report in
+            let result = NSAlert()
+            result.messageText = "诊断结果"
+            result.informativeText = report
+            result.addButton(withTitle: "好")
+            result.addButton(withTitle: "打开应用日志")
+            if result.runModal() == .alertSecondButtonReturn {
+                self?.openAppLog(nil)
+            }
+        }
+    }
+
+    @objc private func openAppLog(_ sender: Any?) {
+        NSWorkspace.shared.open(AppLog.fileURL)
     }
 
     @objc private func showStatus(_ sender: Any?) {
