@@ -93,6 +93,10 @@ aula --asr-provider whisper --asr-model small --open
 
 ![原生上课界面](docs/screenshot-native-class.png)
 
+上课时按 ⌥⌘R 开始（全局生效，不用切窗口），右上角浮着双语字幕：
+
+![悬浮字幕](docs/screenshot-native-caption.png)
+
 下课点「生成听课记录」，把整节课压成带 frontmatter 的 Markdown，复制或存成 `.md`：
 
 ![听课记录](docs/screenshot-native-digest.png)
