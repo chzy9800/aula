@@ -162,7 +162,7 @@
 | pbs + sidecar 冷启动总时长 | **✅ 通过** | 双击到 `/api/health` 通 **805ms**（含端口协商与进程拉起）。见 §8.2 |
 | sidecar 退出清理 | **✅ 通过** | `--probe` 结束后 `pgrep` 无残留。见 §8.2 |
 | AVAudioEngine 麦克风在 app bundle 内的 TCC 归属 | ⏳ 需真人一次 | `--probe-permissions` 能报状态，但**从终端跑反映的是终端的授权**（TCC 认负责进程）；只有在 app 里点一次「开始听课」才能确认 bundle 授权 |
-| 进程内 `SCStream` 替代 `helpers/main.swift` | ⏳ 待验 | 需屏幕录制授权：把捕获段搬进 app，播 TTS 看是否入库 |
+| 进程内 `SCStream` 替代 `helpers/main.swift` | **✅ 代码通路已验证**，app 内授权待你点一次 | 8 秒真实音频 → 399 块 / 127680 样本 / peak 19149，格式 `lpcm Float32 non-interleaved @16k`。`--probe-system-audio [秒数]` 可复现；**受限沙箱里会拿到全零数据**（流在、格式对、峰值 0），别误判成代码问题 |
 | SwiftUI 长列表 45 分钟课程性能 | **✅ 基本通过** | 500 条注入+布局 55ms、3000 条 60ms、绘制 33ms——几乎不随条数增长，`LazyVStack` 生效。真机滚动帧率仍需一次实际听课观察 |
 
 ## 7. 对施工顺序的建议

@@ -81,7 +81,7 @@ aula --asr-provider whisper --asr-model small --open
 | --- | --- | --- |
 | 网课在浏览器里（YouTube、网页版会议） | 音频来源选「标签页/系统声音」，分享时勾选「分享标签页音频」 | 零安装，Chrome/Edge 即可 |
 | 网课在桌面客户端（Zoom.app、Teams.app），Windows | 共享时选「整个屏幕」+ 勾选「同时分享系统声音」 | 零安装 |
-| 网课在桌面客户端，macOS | 首选：音频来源选「系统声音·本机助手」——服务端自动编译并拉起 Swift 助手（ScreenCaptureKit 抓系统音频），首次批一次「屏幕录制」权限。备选：装 [BlackHole](https://existential.audio) 虚拟声卡当麦克风 | 助手需 Xcode Command Line Tools；BlackHole 一次配置 5 分钟 |
+| 网课在桌面客户端，macOS | **原生 app 首选**：音频来源选「系统声音」，首次批一次「屏幕录制」权限即可（进程内 ScreenCaptureKit，不需装任何东西）。浏览器版备选：音频来源选「系统声音·本机助手」——服务端自动编译并拉起 Swift 助手。再备选：装 [BlackHole](https://existential.audio) 虚拟声卡当麦克风 | 原生 app 零配置；助手需 Xcode Command Line Tools；BlackHole 一次配置 5 分钟 |
 
 为什么 macOS 桌面客户端要走 BlackHole：浏览器的 `getDisplayMedia` 在 macOS 上**只给标签页音频**——抓系统级音频需要 ScreenCaptureKit（原生 API，浏览器页面拿不到权限）。AirTranslate 这类原生应用就是这么做的；aula 现在也内置了同款方案的 Swift 助手（docs/reverse-engineering-airtranslate.md 记录了逆向依据）。系统声音的采集会**关掉回声消除/降噪/自动增益**——那三样是为麦克风语音设计的，会把课件音频搅坏。
 

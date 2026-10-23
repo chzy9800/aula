@@ -48,10 +48,22 @@ struct ClassView: View {
                 Button("停止") { store.stop() }
                     .keyboardShortcut(".", modifiers: .command)
             } else {
+                // 听课时不许切音源：半路换来源会让前后句子归到不同声源上，
+                // 而且换源要重建流——与 Web 版「录音期间禁止切换课堂」同一口径。
+                Picker("", selection: $store.sourceKind) {
+                    ForEach(ClassStore.SourceKind.allCases) { kind in
+                        Text(kind.label).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 168)
+                .help(store.sourceKind.hint)
+
                 Button("开始听课") { store.start() }
                     .keyboardShortcut("r", modifiers: [.command, .option])
                     .disabled(!store.canStart)
-                    .help(store.canStart ? "开始录音并实时翻译" : "服务未就绪")
+                    .help(store.canStart ? store.sourceKind.hint : "服务未就绪")
             }
         }
         .padding(.horizontal, 18)
@@ -147,10 +159,13 @@ struct ClassView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("准备好了")
                 .font(.system(size: 15, weight: .medium))
-            Text("点「开始听课」（⌥⌘R）后，老师说的每句话会在这里逐句出现：\n先出原文，再出粗译，精译到了覆盖并闪一下绿点。")
+            Text("选好声音来源，点「开始听课」（⌥⌘R）。老师说的每句话会在这里逐句出现：\n先出原文，再出粗译，精译到了覆盖并闪一下绿点。")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Text(store.sourceKind.hint)
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
             if let hint = serviceHint {
                 Text(hint)
                     .font(.system(size: 11))

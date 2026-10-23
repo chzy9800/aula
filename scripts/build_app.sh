@@ -79,7 +79,8 @@ swiftc -O -swift-version 5 -parse-as-library \
   "$ROOT/aula/app/Vad.swift" \
   "$ROOT/aula/app/Realtime.swift" \
   "$ROOT/aula/app/ClassStore.swift" \
-  "$ROOT/aula/app/ClassView.swift"
+  "$ROOT/aula/app/ClassView.swift" \
+  "$ROOT/aula/app/SystemAudio.swift"
 
 echo "⑥ 组装 bundle…"
 # 不用 rm -rf 清旧包：一是安全闸门会拦（4000+ 文件），二是留一份旧版能回滚。

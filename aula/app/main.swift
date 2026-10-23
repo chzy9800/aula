@@ -276,6 +276,71 @@ func runPermissionProbe() -> Int32 {
     return 0
 }
 
+/// 系统声音捕获自检（终端可跑，用终端的屏幕录制权限验证代码通路）。
+/// app 内的授权要另算——TCC 认负责进程。
+func runSystemAudioProbe(seconds: Double) -> Int32 {
+    // SCShareableContent 要走 WindowServer：命令行进程必须先初始化图形会话，
+    // 否则断言失败 CGS_REQUIRE_INIT（did_initialize）。不需要窗口，只要 shared 实例。
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
+    print("--- 系统声音捕获 ---")
+    let granted = SystemAudioSource.hasPermission()
+    print("  屏幕录制: \(granted ? "已授权" : "未授权")")
+    if !granted {
+        print("  ⚠️ 先给运行本命令的终端勾上「屏幕录制」，再重跑")
+        return 2
+    }
+    if seconds <= 0 {
+        print("  只查权限，不捕获")
+        return 0
+    }
+
+    let source = SystemAudioSource()
+    let lock = NSLock()
+    var totalSamples = 0
+    var chunks = 0
+    var peak = 0
+    source.onSamples = { samples in
+        lock.lock()
+        totalSamples += samples.count
+        chunks += 1
+        peak = max(peak, samples.map { abs(Int($0)) }.max() ?? 0)
+        lock.unlock()
+    }
+    source.onFailure = { message in
+        print("  FAIL: \(message)")
+    }
+
+    var done = false
+    Task {
+        do {
+            try await source.start()
+            print("  已开始捕获 \(Int(seconds))s——让电脑播放点声音（音乐/视频/TTS 都行）…")
+        } catch {
+            print("  start FAIL: \(error.localizedDescription)")
+            done = true
+            return
+        }
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        source.stop()
+        done = true
+    }
+    while !done { pump(0.1) }
+
+    lock.lock()
+    let samples = totalSamples, chunkCount = chunks, peakValue = peak
+    lock.unlock()
+    print("  格式: \(source.formatDescription.isEmpty ? "未收到音频" : source.formatDescription)")
+    print("  samples: \(samples)（≈\(String(format: "%.1f", Double(samples) / 16000))s）  chunks: \(chunkCount)  peak: \(peakValue)")
+    let ok = samples > 0 && chunkCount > 0
+    print(ok ? "PROBE OK" : "PROBE FAIL: 没抓到音频（电脑当时是否在出声？）")
+    if ok && peakValue == 0 {
+        print("  提示：峰值 0 = 流在但全静音。两种可能——当时没声音，或运行环境拿不到系统音频（受限沙箱会这样）")
+    }
+    return ok ? 0 : 1
+}
+
 // MARK: - 状态窗
 
 final class StatusWindowController: NSWindowController {
@@ -506,6 +571,10 @@ final class AulaApp {
         }
         if args.contains("--probe-permissions") {
             exit(runPermissionProbe())
+        }
+        if let i = args.firstIndex(of: "--probe-system-audio") {
+            let seconds = args.count > i + 1 ? (Double(args[i + 1]) ?? 6) : 6
+            exit(runSystemAudioProbe(seconds: seconds))
         }
         let app = NSApplication.shared
         let delegate = AppDelegate()

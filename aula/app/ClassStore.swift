@@ -32,6 +32,26 @@ final class ClassStore: ObservableObject {
         case idle, starting, listening, stopping, failed
     }
 
+    /// 声音从哪来。网课声音在电脑里播（Zoom/Teams/网页），麦克风收不到——
+    /// 这是 0.7 版本就踩过的坑，原生版把这条选择做进界面。
+    enum SourceKind: String, CaseIterable, Identifiable {
+        case microphone, systemAudio
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .microphone: return "麦克风"
+            case .systemAudio: return "系统声音"
+            }
+        }
+        var hint: String {
+            switch self {
+            case .microphone: return "老师现场讲课，或你戴耳机听网课"
+            case .systemAudio: return "网课声音从电脑播出来（需屏幕录制权限）"
+            }
+        }
+    }
+
+    @Published var sourceKind: SourceKind = .microphone
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var lines: [Line] = []
     @Published private(set) var draft: Line?
@@ -45,11 +65,13 @@ final class ClassStore: ObservableObject {
     private let realtime = RealtimeClient()
     private let vad = VadSegmenter()
     private let engine = AVAudioEngine()
+    private let systemAudio = SystemAudioSource()
     private var converter: AVAudioConverter?
+    private var micTapInstalled = false
     private var sessionId: String?
     private var startedAt: Date?
     private var timer: Timer?
-    private var draftKey = -1
+    private let draftKey = -1
 
     var baseURL: String { sidecar.baseURL }
     var canStart: Bool { sidecar.state == .ready && (phase == .idle || phase == .failed) }
@@ -93,6 +115,15 @@ final class ClassStore: ObservableObject {
     }
 
     private func beginCapture() {
+        switch sourceKind {
+        case .microphone:
+            beginMicrophone()
+        case .systemAudio:
+            beginSystemAudio()
+        }
+    }
+
+    private func beginMicrophone() {
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0 else {
@@ -106,17 +137,35 @@ final class ClassStore: ObservableObject {
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.handleTap(buffer, target: target)
         }
+        micTapInstalled = true
         do {
             engine.prepare()
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            micTapInstalled = false
             setPhase(.failed, "启动音频引擎失败：\(error.localizedDescription)")
             return
         }
         startedAt = Date()
         startTimer()
-        setPhase(.listening, "正在听课 · \(sessionTitle)")
+        setPhase(.listening, "正在听课（麦克风）· \(sessionTitle)")
+    }
+
+    /// 系统声音：ScreenCaptureKit 进程内抓混音。首次会弹屏幕录制授权。
+    private func beginSystemAudio() {
+        DispatchQueue.main.async { self.setPhase(.starting, "正在申请屏幕录制权限…") }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.systemAudio.start()
+                self.startedAt = Date()
+                self.startTimer()
+                self.setPhase(.listening, "正在听课（系统声音）· \(self.sessionTitle)")
+            } catch {
+                self.setPhase(.failed, error.localizedDescription)
+            }
+        }
     }
 
     private func handleTap(_ buffer: AVAudioPCMBuffer, target: AVAudioFormat) {
@@ -159,9 +208,16 @@ final class ClassStore: ObservableObject {
         timer?.invalidate()
         timer = nil
         if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
+        if micTapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            micTapInstalled = false
+        }
         converter = nil
         vad.reset()
+        // stopCapture 里可能等最多 3 秒收尾，别放在主线程
+        DispatchQueue.global(qos: .userInitiated).async { [systemAudio] in
+            systemAudio.stop()
+        }
     }
 
     // MARK: - 事件
@@ -172,6 +228,15 @@ final class ClassStore: ObservableObject {
         }
         vad.onPartial = { [weak self] frame in
             self?.realtime.send(frame)
+        }
+        // 系统声音与麦克风走同一个 VAD，切句口径一致
+        systemAudio.onSamples = { [weak self] samples in
+            self?.vad.feed(samples: samples)
+        }
+        systemAudio.onFailure = { [weak self] message in
+            guard let self, self.phase == .listening || self.phase == .starting else { return }
+            self.setPhase(.failed, message)
+            self.teardownCapture()
         }
     }
 
@@ -225,6 +290,17 @@ final class ClassStore: ObservableObject {
     /// 正常运行时不会调用——真实数据只能从 WS 事件流里来。
     /// `count` 给性能基准用（灌 500 条看长列表渲染）。
     func loadDemoLines(count: Int = 3) {
+        if count == 0 {
+            // 空态：用来检查音源选择器与引导文案
+            lines = []
+            draft = nil
+            sessionTitle = ""
+            statusText = "未开始"
+            asrLabel = ""
+            phase = .idle
+            elapsed = 0
+            return
+        }
         let samples: [(String, String, Int)] = [
             ("La instalación eléctrica de la vivienda tiene dos tipos de corriente.",
              "住宅电气装置有两种电流。", 871),
