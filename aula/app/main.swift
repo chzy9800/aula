@@ -553,6 +553,8 @@ final class StatusWindowController: NSWindowController {
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
+    private var statusMenu: NSMenu?
+    private let menuBarPanel = MenuBarPanel()
     private let sidecar = Sidecar()
     private var statusWindow: StatusWindowController?
     private var classWindow: NSWindow?
@@ -584,6 +586,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                           accessibilityDescription: "aula")
         statusItem.button?.image?.isTemplate = true
         statusItem.button?.toolTip = "aula · 课堂到笔记"
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(handleStatusItemClick)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         buildMenu()
 
         sidecar.onStateChange = { [weak self] state, text in
@@ -599,6 +604,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 悬浮字幕窗：跟着 ClassStore 走，不自己维护数据
         captionPanel.bind(to: classStore)
+
+        // 菜单栏面板：左键点图标弹出，能看状态和最近一句
+        menuBarPanel.bind(to: classStore)
+        menuBarPanel.onOpenClass = { [weak self] in self?.showClass(nil) }
+        menuBarPanel.onOpenLibrary = { [weak self] in self?.showLibrary(nil) }
+        menuBarPanel.onOpenSettings = { [weak self] in self?.showSettings(nil) }
+        menuBarPanel.onToggleCaptions = { [weak self] in self?.toggleCaptions(nil) }
 
         // 菜单栏图标反映真实状态：空闲/录音/出错三态一眼可辨
         classStore.$phase
@@ -715,7 +727,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "退出 aula", action: #selector(quit(_:)), keyEquivalent: "q")
             .target = self
 
-        statusItem.menu = menu
+        // 不直接挂到 statusItem：左键要弹面板，右键才弹这个菜单
+        statusMenu = menu
+    }
+
+    @objc private func handleStatusItemClick() {
+        guard let event = NSApp.currentEvent else { return }
+        let wantsMenu = event.type == .rightMouseUp || event.modifierFlags.contains(.control)
+        if wantsMenu {
+            // 临时挂上菜单再触发一次点击——这是让右键走系统菜单的标准做法
+            statusItem.menu = statusMenu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+        } else if let button = statusItem.button {
+            menuBarPanel.toggle(relativeTo: button)
+        }
     }
 
     @objc private func showClass(_ sender: Any?) {

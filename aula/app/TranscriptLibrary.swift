@@ -181,11 +181,16 @@ struct TranscriptLibraryView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.sessions.isEmpty && !model.loading {
-            VStack(spacing: 6) {
-                Text("还没有保存过课堂").font(.system(size: 13))
-                Text("按 ⌥⌘R 听一节课，结束后会自动出现在这里。")
+            VStack(spacing: 10) {
+                Image(systemName: "tray.full")
+                    .font(.system(size: 30, weight: .light))
+                    .foregroundStyle(Theme.teal.opacity(0.5))
+                Text("还没有保存过课堂").font(.system(size: 14, weight: .medium))
+                Text("按 ⌥⌘R 听一节课，或点「导入音频…」把录音文件转成课堂。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -235,9 +240,19 @@ struct TranscriptLibraryView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(RoundedRectangle(cornerRadius: 8)
-            .fill(selected ? Theme.teal.opacity(0.12) : Color.primary.opacity(0.04)))
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 10)
+            .fill(selected ? Theme.teal.opacity(0.10) : Color.primary.opacity(0.035)))
+        .overlay(alignment: .leading) {
+            // 选中态左侧青色竖条：比整块变色更克制，列表里扫得出来
+            if selected {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Theme.teal)
+                    .frame(width: 3)
+                    .padding(.vertical, 8)
+                    .padding(.leading, 3)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture { model.selected = session.id }
     }
