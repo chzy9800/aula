@@ -333,6 +333,101 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
             "model": engines.settings.resolved_summary_model(),
         }
 
+    # —— 文件转写 ——
+
+    def _download_audio(url: str, target: Path) -> Path:
+        """下载公开音频。走 net.opener_for，本机地址自动绕代理。"""
+        from .net import opener_for
+
+        with opener_for(url).open(url, timeout=120) as response, open(target, "wb") as handle:
+            shutil.copyfileobj(response, handle)
+        return target
+
+    @app.post("/api/transcribe-file")
+    async def transcribe_file(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """把本地音频文件或公开 URL 转成一节课（整文件转写 + 逐段翻译）。
+
+        **同步执行**：10 分钟音频在 whisper small 上约 3 分钟。客户端要把超时设长，
+        并明确告诉用户"在处理中"，否则会以为卡死。
+        """
+        local_path = str(payload.get("path") or "").strip()
+        url = str(payload.get("url") or "").strip()
+        title = str(payload.get("title") or "").strip()
+        want_translate = bool(payload.get("translate", True))
+
+        if not local_path and not url:
+            raise HTTPException(status_code=400, detail="需要 path（本机文件）或 url（公开音频地址）")
+
+        db_path = engines.settings.db_path()
+        temp_file: Optional[Path] = None
+        source_path = local_path
+        if not source_path:
+            suffix = Path(url.split("?")[0]).suffix or ".bin"
+            temp_file = Path(tempfile.mkdtemp(prefix="aula-dl-")) / ("input" + suffix)
+            try:
+                await asyncio.to_thread(_download_audio, url, temp_file)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=400, detail=f"下载失败：{exc}") from exc
+            source_path = str(temp_file)
+
+        try:
+            if not Path(source_path).exists():
+                raise HTTPException(status_code=404, detail=f"文件不存在：{source_path}")
+
+            try:
+                segments = await engines.asr.transcribe_file(
+                    source_path, engines.settings.source_lang
+                )
+            except ASRError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            if not segments:
+                raise HTTPException(status_code=400,
+                                    detail="没识别出任何内容。确认文件里有人声，且格式常见（mp3/m4a/wav/mp4）")
+
+            session = store.create_session(
+                db_path,
+                title=title or Path(source_path).stem,
+                course="",
+                source_lang=engines.settings.source_lang,
+                target_lang=engines.settings.target_lang,
+            )
+            session_id = session["id"]
+
+            translated_count = 0
+            for segment in segments:
+                translated = ""
+                if want_translate and engines.translator.enabled:
+                    try:
+                        translated = await asyncio.to_thread(
+                            engines.translator.translate, segment.text
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("文件转写：这一句翻译失败（原文保留）：%s", exc)
+                        translated = ""
+                if translated:
+                    translated_count += 1
+                store.add_utterance(
+                    db_path,
+                    session_id,
+                    source=segment.text,
+                    target=translated,
+                    start_ms=int(segment.start * 1000),
+                    end_ms=int(segment.end * 1000),
+                    confidence=None,
+                    latency_ms=0,
+                )
+
+            return {
+                "session_id": session_id,
+                "title": session.get("title") or title,
+                "segments": len(segments),
+                "translated": translated_count,
+            }
+        finally:
+            if temp_file is not None:
+                shutil.rmtree(temp_file.parent, ignore_errors=True)
+
     # —— 导出 ——
 
     @app.get("/api/sessions/{session_id}/export")

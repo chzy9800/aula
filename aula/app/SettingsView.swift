@@ -11,16 +11,16 @@ final class SettingsModel: ObservableObject {
 
         var id: String { rawValue }
 
-        var title: String {
+        func title(_ lang: L10n.Lang) -> String {
             switch self {
-            case .session: return "会话"
-            case .transcription: return "转写"
-            case .translation: return "翻译"
-            case .caption: return "字幕"
-            case .floating: return "浮窗"
-            case .speech: return "语音输出"
-            case .permissions: return "权限"
-            case .about: return "关于"
+            case .session: return L10n.t("会话", "Session", lang: lang)
+            case .transcription: return L10n.t("转写", "Transcription", lang: lang)
+            case .translation: return L10n.t("翻译", "Translation", lang: lang)
+            case .caption: return L10n.t("字幕", "Captions", lang: lang)
+            case .floating: return L10n.t("浮窗", "Floating", lang: lang)
+            case .speech: return L10n.t("语音输出", "Voice", lang: lang)
+            case .permissions: return L10n.t("权限", "Permissions", lang: lang)
+            case .about: return L10n.t("关于", "About", lang: lang)
             }
         }
 
@@ -38,16 +38,24 @@ final class SettingsModel: ObservableObject {
         }
 
         /// 页头说明：每页一句，告诉用户这一堆设置到底管什么
-        var subtitle: String {
+        func subtitle(_ lang: L10n.Lang) -> String {
             switch self {
-            case .session: return "会话怎么开始、结束后转录放哪"
-            case .transcription: return "断句节奏与单句长度"
-            case .translation: return "译文从哪里来、术语怎么保"
-            case .caption: return "字号、配色、对齐——主界面和浮窗共用"
-            case .floating: return "可拖动的浮动字幕窗"
-            case .speech: return "把译文读出来"
-            case .permissions: return "三项系统权限，缺哪个这里能看到"
-            case .about: return "版本与安装位置"
+            case .session:
+                return L10n.t("会话怎么开始、结束后转录放哪", "How a session starts and where transcripts go", lang: lang)
+            case .transcription:
+                return L10n.t("断句节奏与单句长度", "Sentence pacing and segment length", lang: lang)
+            case .translation:
+                return L10n.t("译文从哪里来、术语怎么保", "Where translation comes from and how terms are kept", lang: lang)
+            case .caption:
+                return L10n.t("字号、配色、对齐——主界面和浮窗共用", "Size, colour, alignment — shared by both windows", lang: lang)
+            case .floating:
+                return L10n.t("可拖动的浮动字幕窗", "The draggable floating caption window", lang: lang)
+            case .speech:
+                return L10n.t("把译文读出来", "Speak translated captions aloud", lang: lang)
+            case .permissions:
+                return L10n.t("三项系统权限，缺哪个这里能看到", "Three system permissions and their live status", lang: lang)
+            case .about:
+                return L10n.t("版本与安装位置", "Version and install location", lang: lang)
             }
         }
     }
@@ -105,7 +113,7 @@ struct SettingsView: View {
                         Image(systemName: category.symbol)
                             .font(.system(size: 12))
                             .frame(width: 16)
-                        Text(category.title).font(.system(size: 12.5))
+                        Text(category.title(settings.uiLanguage)).font(.system(size: 12.5))
                         Spacer()
                     }
                     .padding(.horizontal, 10)
@@ -127,8 +135,8 @@ struct SettingsView: View {
 
     private var pageHeader: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(model.category.title).font(.system(size: 15, weight: .semibold))
-            Text(model.category.subtitle)
+            Text(model.category.title(settings.uiLanguage)).font(.system(size: 15, weight: .semibold))
+            Text(model.category.subtitle(settings.uiLanguage))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }
@@ -353,6 +361,20 @@ struct SettingsView: View {
 
     private var aboutPage: some View {
         Group {
+            settingRow(L10n.t("界面语言", "Interface language", lang: settings.uiLanguage)) {
+                Picker("", selection: $settings.uiLanguage) {
+                    ForEach(L10n.Lang.allCases) { lang in
+                        Text(lang.label).tag(lang)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 160)
+            }
+            hint(L10n.t("目前覆盖设置界面与主要按钮；主界面的实时状态文案仍是中文。",
+                        "Covers the settings window and main buttons. Live status text stays in Chinese for now.",
+                        lang: settings.uiLanguage))
+            divider
             keyValue("版本", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.8.0")
             keyValue("应用路径", Bundle.main.bundlePath)
             keyValue("日志", AppLog.fileURL.path)

@@ -185,6 +185,44 @@ class ApiTest(unittest.TestCase):
 
     # —— 实时链路 ——
 
+    def test_transcribe_file_creates_session_with_segments(self):
+        """整文件转写：一次调用建好一节课，逐段入库并翻译。
+
+        用 mock ASR（返回 3 个假分段）验证整条流程；真实转写走 whisper，
+        它会用 PyAV 解码 mp3/m4a/wav/mp4，不需要我们额外转码。
+        """
+        import tempfile as tempfile_mod
+
+        with tempfile_mod.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+            handle.write(b"RIFF....WAVEfmt ")   # 内容不重要，mock 不读它
+            fake_path = handle.name
+        try:
+            response = self.client.post("/api/transcribe-file",
+                                        json={"path": fake_path, "title": "导入的课"})
+            self.assertEqual(response.status_code, 200, response.text)
+            body = response.json()
+            self.assertEqual(body["segments"], 3)
+            self.assertEqual(body["title"], "导入的课")
+
+            detail = self.client.get(f"/api/sessions/{body['session_id']}").json()
+            self.assertEqual(len(detail["utterances"]), 3)
+            self.assertTrue(detail["utterances"][0]["source"])
+            self.assertEqual(detail["utterances"][0]["target"], "中文译文",
+                             "文件转写也要走翻译")
+        finally:
+            import os as os_mod
+            os_mod.unlink(fake_path)
+
+    def test_transcribe_file_requires_path_or_url(self):
+        response = self.client.post("/api/transcribe-file", json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("path", response.json()["detail"])
+
+    def test_transcribe_file_missing_file_is_404(self):
+        response = self.client.post("/api/transcribe-file",
+                                    json={"path": "/tmp/definitely-not-here-12345.wav"})
+        self.assertEqual(response.status_code, 404)
+
     def test_websocket_transcribes_then_translates(self):
         """原文先推、译文流式后到：约 1 秒看到文字，随后译文逐字长出来。
 

@@ -80,6 +80,9 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// 界面语言。目前覆盖设置界面与主要按钮，主界面运行时文案仍是中文。
+    @Published var uiLanguage: L10n.Lang { didSet { persist() } }
+
     @Published var outputMode: OutputMode { didSet { persist() } }
     @Published var transcriptionSpeed: TranscriptionSpeed { didSet { persist() } }
     @Published var translationPriority: TranslationPriority { didSet { persist() } }
@@ -109,6 +112,7 @@ final class AppSettings: ObservableObject {
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
         translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality
         transcriptionSpeed = TranscriptionSpeed(rawValue: defaults.string(forKey: Self.prefix + "asrSpeed") ?? "") ?? .balanced
+        uiLanguage = L10n.Lang(rawValue: defaults.string(forKey: Self.prefix + "uiLanguage") ?? "") ?? .zh
         paragraphSilenceMs = defaults.object(forKey: Self.prefix + "silenceMs") as? Double ?? 550
         minSpeechMs = defaults.object(forKey: Self.prefix + "minSpeechMs") as? Double ?? 350
         maxSegmentMs = defaults.object(forKey: Self.prefix + "maxSegmentMs") as? Double ?? 15000
@@ -125,6 +129,7 @@ final class AppSettings: ObservableObject {
         defaults.set(outputMode.rawValue, forKey: Self.prefix + "outputMode")
         defaults.set(translationPriority.rawValue, forKey: Self.prefix + "transPriority")
         defaults.set(transcriptionSpeed.rawValue, forKey: Self.prefix + "asrSpeed")
+        defaults.set(uiLanguage.rawValue, forKey: Self.prefix + "uiLanguage")
         defaults.set(paragraphSilenceMs, forKey: Self.prefix + "silenceMs")
         defaults.set(minSpeechMs, forKey: Self.prefix + "minSpeechMs")
         defaults.set(maxSegmentMs, forKey: Self.prefix + "maxSegmentMs")

@@ -386,10 +386,12 @@ func runSystemAudioProbe(seconds: Double) -> Int32 {
 }
 
 /// 设置窗口渲染自检：改完设置布局先看图
-func runRenderSettings(_ outputPath: String, category: String) -> Int32 {
+func runRenderSettings(_ outputPath: String, category: String, lang: String = "zh") -> Int32 {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
+    // 允许自检时切语言：L10n 的便捷形式读的是 UserDefaults
+    UserDefaults.standard.set(lang, forKey: "aula.settings.uiLanguage")
     let model = SettingsModel()
     if let parsed = SettingsModel.Category(rawValue: category) { model.category = parsed }
     let store = ClassStore(sidecar: Sidecar())
@@ -853,7 +855,8 @@ final class AulaApp {
         if let i = args.firstIndex(of: "--render-settings") {
             let path = args.count > i + 1 ? args[i + 1] : "/tmp/aula-settings.png"
             let category = args.count > i + 2 ? args[i + 2] : "session"
-            exit(runRenderSettings(path, category: category))
+            let lang = args.count > i + 3 ? args[i + 3] : "zh"
+            exit(runRenderSettings(path, category: category, lang: lang))
         }
         if let i = args.firstIndex(of: "--render-caption") {
             let path = args.count > i + 1 ? args[i + 1] : "/tmp/aula-caption.png"

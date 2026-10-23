@@ -17,6 +17,8 @@ final class TranscriptLibraryStore: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var error: String = ""
     @Published var selected: String?
+    @Published private(set) var importing = false
+    @Published private(set) var importStatus = ""
 
     private let baseURL: () -> String
 
@@ -51,6 +53,38 @@ final class TranscriptLibraryStore: ObservableObject {
                 self.error = failure
                 self.loading = false
                 if self.selected == nil { self.selected = parsed.first?.id }
+            }
+        }
+    }
+
+    /// 导入本地音频：整文件转写 + 逐段翻译，完成后自动出现在库里。
+    /// 同步接口，10 分钟音频约 3 分钟——必须给足超时并显示进度。
+    func importFile(path: String, title: String) {
+        runImport(payload: ["path": path, "title": title, "translate": true],
+                  label: title)
+    }
+
+    func importURL(_ url: String) {
+        runImport(payload: ["url": url, "translate": true], label: url)
+    }
+
+    private func runImport(payload: [String: Any], label: String) {
+        guard !importing else { return }
+        importing = true
+        importStatus = "正在转写「\(label)」…长音频可能要几分钟"
+        let url = baseURL() + "/api/transcribe-file"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Sidecar.post(url, payload: payload, timeout: 1800)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.importing = false
+                if let sid = result?["session_id"] as? String {
+                    self.importStatus = ""
+                    self.selected = sid
+                    self.reload()
+                } else {
+                    self.importStatus = "导入失败：确认文件里有人声、格式常见（mp3/m4a/wav/mp4），或服务日志里有具体原因"
+                }
             }
         }
     }
@@ -97,6 +131,16 @@ struct TranscriptLibraryView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if !model.importStatus.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.badge.plus").font(.system(size: 10))
+                    Text(model.importStatus).font(.system(size: 10.5))
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 8)
+            }
             Divider().opacity(0.3)
             content
         }
@@ -113,7 +157,10 @@ struct TranscriptLibraryView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if model.loading { ProgressView().controlSize(.small) }
+            if model.loading || model.importing { ProgressView().controlSize(.small) }
+            Button("导入音频…") { pickAudioFile() }
+                .controlSize(.small)
+                .disabled(model.importing)
             Button("刷新") { model.reload() }
                 .controlSize(.small)
         }
@@ -150,6 +197,16 @@ struct TranscriptLibraryView: View {
                 .padding(14)
             }
         }
+    }
+
+    /// 选一个音频文件交给服务端转写。支持 mp3/m4a/wav/mp4——whisper 内部用 PyAV 解码。
+    private func pickAudioFile() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.audio, .movie]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.importFile(path: url.path, title: url.deletingPathExtension().lastPathComponent)
     }
 
     private func row(_ session: TranscriptLibraryStore.SavedSession) -> some View {

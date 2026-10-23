@@ -23,7 +23,7 @@ import urllib.request
 import uuid
 import wave
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .net import opener_for
 
@@ -51,11 +51,28 @@ def pcm_to_wav(pcm: bytes, sample_rate: int) -> bytes:
     return buffer.getvalue()
 
 
+@dataclass
+class TimedSegment:
+    """文件转写的一段：文本 + 起止秒。"""
+    text: str
+    start: float
+    end: float
+
+
 class BaseASR:
     name = "base"
 
     async def transcribe(self, pcm: bytes, sample_rate: int, lang: str) -> ASRResult:
         raise NotImplementedError
+
+    async def transcribe_file(self, path: str, lang: str) -> List["TimedSegment"]:
+        """整文件转写，返回带时间戳的分段。
+
+        只有本地 whisper 实现了它——它内部用 PyAV 解码，任意常见格式都能读，
+        不需要我们额外接 ffmpeg。云端 provider 要做文件转写得先上传，
+        接口和计费都不一样，暂不支持（会明确报错，不是静默失败）。
+        """
+        raise ASRError("当前转写服务不支持整文件转写，请把 asr_provider 设为 whisper（本地）")
 
     def describe(self) -> Dict[str, Any]:
         return {"provider": self.name}
@@ -91,6 +108,14 @@ class MockASR(BaseASR):
 
     def describe(self) -> Dict[str, Any]:
         return {"provider": self.name, "note": "演示模式，返回预置句子"}
+
+
+    async def transcribe_file(self, path: str, lang: str) -> List["TimedSegment"]:
+        # 假分段：让"文件转写"整条流程（建课堂/写库/翻译）在没有模型时也能测
+        return [
+            TimedSegment(text=text, start=index * 3.0, end=(index + 1) * 3.0)
+            for index, text in enumerate(self.SENTENCES[:3])
+        ]
 
 
 class OpenAICompatASR(BaseASR):
@@ -228,6 +253,30 @@ class WhisperLocalASR(BaseASR):
             confidence=getattr(info, "language_probability", None),
             provider=self.name,
         )
+
+    async def transcribe_file(self, path: str, lang: str) -> List["TimedSegment"]:
+        return await asyncio.to_thread(self._transcribe_file_sync, path, lang)
+
+    def _transcribe_file_sync(self, path: str, lang: str) -> List["TimedSegment"]:
+        """整文件转写。faster-whisper 内部用 PyAV 解码，mp3/m4a/wav/mp4 都能直接读，
+        不需要我们先转成 16k wav——省掉一个 ffmpeg 依赖。"""
+        model = self._load()
+        with self._model_lock:
+            segments, _info = model.transcribe(
+                path,
+                language=None if lang in ("", "auto") else lang,
+                vad_filter=True,
+                beam_size=1,
+                condition_on_previous_text=False,
+            )
+            out: List[TimedSegment] = []
+            for segment in segments:
+                text = (segment.text or "").strip()
+                if text:
+                    out.append(TimedSegment(text=text,
+                                            start=float(segment.start),
+                                            end=float(segment.end)))
+            return out
 
     def describe(self) -> Dict[str, Any]:
         return {"provider": self.name, "model": self.model_size, "device": self.device}
@@ -384,6 +433,9 @@ class TimedASR:
         result = await self.inner.transcribe(pcm, sample_rate, lang)
         elapsed = int((time.monotonic() - started) * 1000)
         return result, elapsed
+
+    async def transcribe_file(self, path: str, lang: str) -> List["TimedSegment"]:
+        return await self.inner.transcribe_file(path, lang)
 
     def describe(self) -> Dict[str, Any]:
         return self.inner.describe()
