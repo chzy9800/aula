@@ -4,6 +4,62 @@
 
 ## [未发布]
 
+### 新增：原生上课界面——逐句双语，草稿原位转正
+
+`aula/app/ClassView.swift` + `ClassStore.swift` + `Realtime.swift` + `Vad.swift`：SwiftUI
+上课界面接上真实链路。顶部标题/计时/开始停止，主体逐句双语（原文小字、译文大字），
+草稿行用浅色斜体原位覆盖（每 0.9 秒刷新，不追加半句），定稿转正，精译到了闪一个绿点。
+菜单栏加「上课界面 ⌘1」，首启直接打开它——双击后该看到的是这个，不是服务状态窗。
+
+`Vad.swift` 从 `menubar/main.swift` 抽成共享切句器，参数与浏览器 AudioWorklet
+**逐行同口径**（三端切出的句子边界必须一致，否则同一段录音在不同入口得到不同分段）。
+`Realtime.swift` 封装 `/ws/live`：12 字节帧上行、8 种下行 JSON、事件回主线程派发。
+
+两个自检入口替代人肉点按钮：`--probe-class <pcm目录>` 无 UI 跑通整条链路
+（起服务→建课堂→连 WS→发真实西语 PCM→断言三层消息），`--render-preview <png>`
+把界面用视图缓存渲染成图（不需要屏幕录制权限），改完 UI 先看图再起 app。
+
+实测（3 段西语 TTS，共 11 秒音频）：sidecar 804ms 就绪，草稿 3 条 / 定稿 3 条 /
+精译 3 条，识别与术语翻译均正确（`consignar → 挂牌上锁`）。长列表 3000 条（45 分钟
+课量级）注入+布局 60ms，几乎不随条数增长。另加 `--probe-permissions` 报权限与运行
+环境——它会提醒：从终端跑得到的授权属于终端，TCC 认的是负责进程。
+
+**验收口径按服务端真实语义定**，不按直觉：草稿是尽力而为（`server.py` 明写
+「定稿优先、草稿让路」），所以不要求条数；精译只在译法变化时才推（相同时不推是
+为了省一次回填闪烁），因此 `translation` 条数 ≤ `transcript` 是正常现象。第一版自检
+按「三种消息各 ≥3 条」断言，误判成失败——错的是断言不是代码。
+
+
+### 新增：原生应用地基——内嵌 Python 运行时 + sidecar 生命周期
+
+B 路线（Swift 原生 UI + Python sidecar）拍板后的 P0 第一步，只做地基不做界面：
+`aula/app/Sidecar.swift` 负责端口协商（8780 起试到 8840，真 bind 而非查端口表）、
+拉起内嵌 Python、轮询 `/api/health`、崩溃自动重启（3 次退避）、退出时 SIGTERM→SIGKILL
+清理；`aula/app/main.swift` 是菜单栏壳 + 服务状态窗，另带 `--probe` 命令行自检模式
+（无 GUI，可进 CI）。
+
+`scripts/build_app.sh` 一键构建：pbs（python-build-standalone）运行时 + 依赖 +
+Swift 壳 → 263MB 的 `.app`。两个关键取舍：**不用 venv**（pyvenv.cfg 记录构建机绝对
+路径，搬进 bundle 就失效；pbs 本身 relocatable，依赖装进它自己的 prefix 即可）、
+**不用 PyInstaller**（ctranslate2 的 C++ 扩展常被漏收，onedir + 逐二进制签名更稳）。
+
+实测：双击到 `/api/health` 通 818ms（口径是"服务可用"，whisper 懒加载，首句转写另加
+约 0.9s）；退出后无残留进程。另加 `scripts/make_sign_cert.sh` 生成自签证书——ad-hoc
+签名没有显式 designated requirement，TCC 按 CDHash 认人，每次重编译都丢屏幕录制权限；
+自签给出稳定的 `identifier + certificate leaf`。证书「设为可信」会调 SecurityAgent
+弹授权框，必须在图形会话里手动点一次，脚本会检测并提示。
+
+顺手修几个只有真打包才暴露的坑：`FileHandle(forWritingTo:)` **不创建文件**，之前用
+`try?` 兜着，日志其实一直在静默丢弃；LaunchServices 缓存旧 bundle 的可执行文件名，
+磁盘上明明是 `aula`，`open` 起来的却是上一次的 `aula-menubar`（构建脚本已加
+`lsregister -f`）；bash 里全角标点紧跟变量名会被当成变量名的一部分，`set -u` 下直接
+报 unbound variable；app 不处理 SIGTERM 导致 `pkill` 留下孤儿 sidecar，且退出路径调用
+异步 `stop()` 只是"碰巧"跑完——现在改为 `stopAndWait()` 同步等到进程真退出，日志能看到
+`Shutting down → shutdown complete → stopped` 的完整闭环。
+
+可行性依据与实测数据见 `docs/b-route-validation.md`，探针脚本在 `scripts/probes/`。
+
+
 ### 新增：流式字幕——边说边出字，不等一句话说完
 
 YouTube 式实时字幕：说话过程中每 0.9 秒发一次草稿音频（只带最近 8 秒尾巴），

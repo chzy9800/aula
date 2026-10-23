@@ -87,6 +87,22 @@ aula --asr-provider whisper --asr-model small --open
 
 不想跟终端打交道？`bash scripts/build_menubar.sh` 一条命令装出菜单栏应用 **aula.app**：常驻菜单栏一键开始/结束听课，屏幕右下角浮着双语字幕，服务没起会自动拉起。权限批给 app 自身，一次永久。
 
+### 原生应用（正在替换上面的菜单栏版）
+
+`bash scripts/build_app.sh` 装出真正独立的 **aula.app**：内嵌 Python 运行时（263MB），双击即用，不用装依赖、不用开终端、不用起服务。菜单栏常驻 + 上课界面（⌥⌘R 开始听课，⌘1 打开上课界面），逐句双语，草稿边说边出字。
+
+![原生上课界面](docs/screenshot-native-class.png)
+
+```bash
+bash scripts/make_sign_cert.sh          # 一次性：生成自签证书（重编译不丢屏幕录制权限）
+bash scripts/build_app.sh               # 打包并安装到 ~/Applications
+bash scripts/build_app.sh --probe       # 自检：起服务 → 健康 → 建课堂 → 停 → 报耗时
+~/Applications/aula.app/Contents/MacOS/aula --probe-class <pcm目录>   # 课堂链路自检
+~/Applications/aula.app/Contents/MacOS/aula --render-preview out.png  # 把界面渲染成图
+```
+
+现状与实测数据见 [docs/b-route-validation.md](docs/b-route-validation.md)：服务可用 780–830ms、退出无残留、3000 条列表布局 60ms。**讲义工作区尚未接到原生界面**（PDFKit 可行性已验，见同文档 V1）。
+
 ## 内置服务商与免密钥翻译
 
 `--provider` 一条命令切换，接口地址与模型名自动填好；密钥从各家约定环境变量读。
