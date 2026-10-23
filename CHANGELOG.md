@@ -4,6 +4,39 @@
 
 ## [未发布]
 
+### 新增：设置窗口 / 字幕外观 / 浮窗缩放 / 语音输出 / 转录库（对齐 AirTranslate）
+
+按 `docs/airtranslate-parity-spec.md` 的 P0 一批做完，界面一致度是这轮目标。
+
+- **字幕外观**（`CaptionStyle.swift`）：字号（译文/原文分开）、颜色（预设 + 任意 HEX）、
+  对齐、文字描边、滚动边缘渐隐，全部持久化到 UserDefaults。主界面与浮窗共用一份设置。
+- **浮窗可交互**（`CaptionPanel.swift`）：整面拖动、右下角手柄缩放（borderless 窗口拖不了
+  边角，只能自己画）、位置尺寸记忆、越界自动回默认位、缩放系数/不透明度/保留句数可调、
+  菜单可重置位置。
+- **设置窗口**（`SettingsView.swift`）：8 类侧边栏（会话/转写/翻译/字幕/浮窗/语音输出/
+  权限/关于），每页一句页头说明它管什么。权限页显示三项真实状态并可直达系统设置。
+- **语音输出**（`AppSettings.swift` 的 `SpeechOutput`）：AVSpeechSynthesizer 朗读译文。
+  **只在定稿时朗读**——读草稿或读增量会把一句话读成几十段碎片。含音色/音量/语速与试听。
+- **转录库**（`TranscriptLibrary.swift`）：列表、导出 Markdown、继续某节课、删除。数据直接读
+  服务端 `/api/sessions`，不在 Swift 侧另存一份。
+- **会话策略**：每次开始新建课堂 or 续用上一次（对应 Start New Session / Keep Current Session），
+  续用时把已有句子填回界面。段落静音阈值可调，改动在下次开始时生效。
+
+三个踩过的坑记一下：
+
+1. **默认译文色写死 `#FFFFFF`，在浅色背景下几乎看不见**。改成空值 = 跟随系统
+   （`Color.primary` / `NSColor.labelColor`），亮暗模式都正确。截图才发现，代码看不出。
+2. `CaptionPanel` 改成 `NSObject` 子类做窗口代理后，`panel.delegate = self` 必须在
+   `super.init()` 之后，否则 `'self' used before 'super.init' call`。
+3. `frame(maxWidth:alignment:)` 收 `Alignment`，而 `VStack(alignment:)` 收
+   `HorizontalAlignment`——两个都暴露，别混用。
+
+新增自检 `--render-settings <png> <category>`：改设置布局先看图，不用起 app 点。
+
+实测：服务 792ms、快捷键注册成功、课堂链路 42 delta / 3 定稿 / 3 收尾完整、
+GUI 启动退出无残留。
+
+
 ### 变更：译文改为流式逐字，取消粗译接力（消除字幕反复替换）
 
 原来的三段时间线让同一句译文在屏幕上变两三次：0.2 秒粗译到 → 0.9 秒定稿重推 → 2.5 秒

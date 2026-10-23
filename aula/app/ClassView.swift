@@ -8,6 +8,8 @@ import SwiftUI
 struct ClassView: View {
 
     @ObservedObject var store: ClassStore
+    /// 必须单独观察：嵌套在 store 里的 ObservableObject 变更不会自动传播到视图
+    @ObservedObject var style: CaptionStyle
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,7 +105,8 @@ struct ClassView: View {
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+                .padding(.top, 26)
+                .padding(.bottom, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onChange(of: store.lines.count) { _ in
@@ -111,6 +114,19 @@ struct ClassView: View {
             }
             .onChange(of: store.draft?.source) { _ in
                 scrollToBottom(proxy)
+            }
+            .mask(alignment: .center) {
+                if style.fadeMask {
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                            .frame(height: 22)
+                        Rectangle().fill(.black)
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: 22)
+                    }
+                } else {
+                    Rectangle().fill(.black)
+                }
             }
         }
     }
@@ -122,7 +138,7 @@ struct ClassView: View {
     }
 
     private func row(_ line: ClassStore.Line) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: style.alignment.horizontal, spacing: 5) {
             HStack(spacing: 7) {
                 Text(line.timeLabel)
                     .font(.system(size: 10).monospacedDigit())
@@ -137,24 +153,28 @@ struct ClassView: View {
                 }
             }
             Text(line.source)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .font(.system(size: style.sourceFontSize))
+                .foregroundStyle(style.sourceColor)
+                .multilineTextAlignment(style.alignment.swiftUI)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(line.target.isEmpty && line.streaming ? "…" : line.target)
-                    .font(.system(size: 15))
+                    .font(.system(size: style.fontSize))
+                    .foregroundStyle(style.textColor)
+                    .multilineTextAlignment(style.alignment.swiftUI)
+                    .outlinedIfNeeded(style.outline)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 if line.streaming {
                     // 光标表示"这句还没写完"——流式到达时比一个空格更能说明状态
                     Text("▌")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: style.fontSize - 1))
+                        .foregroundStyle(style.textColor.opacity(0.5))
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: style.alignment.frameAlignment)
     }
 
     /// 草稿行：浅色斜体 + 呼吸。逐帧覆盖同一位置，不追加——否则会刷出一堆半句。
@@ -317,5 +337,30 @@ struct DigestSheet: View {
         if panel.runModal() == .OK, let url = panel.url {
             try? digest.write(to: url, atomically: true, encoding: .utf8)
         }
+    }
+}
+
+
+/// 文字描边。SwiftUI 没有真正的描边 API，用四向零半径阴影近似——
+/// 在亮背景（幻灯片、白底 PDF）上，这比换字色更可靠。
+private struct OutlineModifier: ViewModifier {
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .shadow(color: .black.opacity(0.85), radius: 0, x: 1.2, y: 0)
+                .shadow(color: .black.opacity(0.85), radius: 0, x: -1.2, y: 0)
+                .shadow(color: .black.opacity(0.85), radius: 0, x: 0, y: 1.2)
+                .shadow(color: .black.opacity(0.85), radius: 0, x: 0, y: -1.2)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func outlinedIfNeeded(_ enabled: Bool) -> some View {
+        modifier(OutlineModifier(enabled: enabled))
     }
 }

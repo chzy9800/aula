@@ -247,7 +247,7 @@ func runRenderPreview(_ outputPath: String, count: Int = 3, listening: Bool = tr
     let t0 = Date()
     store.loadDemoLines(count: count, listening: listening)
 
-    let hosting = NSHostingView(rootView: ClassView(store: store))
+    let hosting = NSHostingView(rootView: ClassView(store: store, style: store.style))
     hosting.frame = NSRect(x: 0, y: 0, width: 780, height: 560)
     let window = NSWindow(contentRect: hosting.frame,
                           styleMask: [.titled], backing: .buffered, defer: false)
@@ -375,6 +375,38 @@ func runSystemAudioProbe(seconds: Double) -> Int32 {
     return ok ? 0 : 1
 }
 
+/// 设置窗口渲染自检：改完设置布局先看图
+func runRenderSettings(_ outputPath: String, category: String) -> Int32 {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
+    let model = SettingsModel()
+    if let parsed = SettingsModel.Category(rawValue: category) { model.category = parsed }
+    let store = ClassStore(sidecar: Sidecar())
+    let hosting = NSHostingView(rootView: SettingsView(model: model, settings: store.settings,
+                                                       style: store.style, classStore: store))
+    hosting.frame = NSRect(x: 0, y: 0, width: 760, height: 540)
+    let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled],
+                          backing: .buffered, defer: false)
+    window.contentView = hosting
+    window.orderBack(nil)
+    hosting.layoutSubtreeIfNeeded()
+    pump(0.8)
+
+    guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+        print("PREVIEW FAIL: 拿不到位图")
+        return 1
+    }
+    hosting.cacheDisplay(in: hosting.bounds, to: rep)
+    guard let data = rep.representation(using: .png, properties: [:]),
+          (try? data.write(to: URL(fileURLWithPath: outputPath))) != nil else {
+        print("PREVIEW FAIL: 写文件失败")
+        return 1
+    }
+    print("PREVIEW OK: \(outputPath) (\(data.count / 1024)KB)")
+    return 0
+}
+
 /// 全局快捷键自检：注册 → 报告 → 注销。
 /// 真正的按键无法自动按，但「能不能注册」是这条链路唯一的失败点
 /// （键位被别的应用占用时会返回 OSStatus），验证它就有意义。
@@ -401,7 +433,7 @@ func runRenderCaption(_ outputPath: String) -> Int32 {
 
     let store = ClassStore(sidecar: Sidecar())
     store.loadDemoLines(count: 3)
-    let panel = CaptionPanel()
+    let panel = CaptionPanel(style: store.style)
     panel.bind(to: store)
     pump(0.4)
 
@@ -506,8 +538,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sidecar = Sidecar()
     private var statusWindow: StatusWindowController?
     private var classWindow: NSWindow?
-    private lazy var classStore = ClassStore(sidecar: sidecar)
-    private lazy var captionPanel = CaptionPanel()
+    private var settingsWindow: NSWindow?
+    private var libraryWindow: NSWindow?
+    private let settings = AppSettings()
+    private let captionStyle = CaptionStyle()
+    private let speechOutput = SpeechOutput()
+    private let settingsModel = SettingsModel()
+    private lazy var libraryStore = TranscriptLibraryStore(baseURL: { [weak self] in
+        self?.sidecar.baseURL ?? ""
+    })
+    private lazy var classStore = ClassStore(sidecar: sidecar,
+                                             settings: settings,
+                                             style: captionStyle,
+                                             speech: speechOutput)
+    private lazy var captionPanel = CaptionPanel(style: captionStyle)
     private var listenHotKey: HotKey?
     private var logItem: NSMenuItem!
     private var captionItem: NSMenuItem!
@@ -603,7 +647,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .target = self
         captionItem = menu.addItem(withTitle: "显示字幕浮窗", action: #selector(toggleCaptions(_:)), keyEquivalent: "2")
         captionItem.target = self
+        menu.addItem(withTitle: "转录库", action: #selector(showLibrary(_:)), keyEquivalent: "4")
+            .target = self
         menu.addItem(withTitle: "显示服务状态", action: #selector(showStatus(_:)), keyEquivalent: "3")
+            .target = self
+        menu.addItem(withTitle: "重置浮窗位置", action: #selector(resetFloatingFrame(_:)), keyEquivalent: "")
+            .target = self
+        menu.addItem(withTitle: "设置…", action: #selector(showSettings(_:)), keyEquivalent: ",")
             .target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "音频诊断…", action: #selector(runAudioDiagnosis(_:)), keyEquivalent: "")
@@ -632,12 +682,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             window.title = "aula · 上课"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: ClassView(store: classStore))
+            window.contentView = NSHostingView(rootView: ClassView(store: classStore, style: captionStyle))
             window.center()
             classWindow = window
         }
         classWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func showSettings(_ sender: Any?) {
+        if settingsWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 540),
+                                  styleMask: [.titled, .closable, .miniaturizable],
+                                  backing: .buffered, defer: false)
+            window.title = "aula 设置"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: SettingsView(model: settingsModel,
+                                                                     settings: settings,
+                                                                     style: captionStyle,
+                                                                     classStore: classStore))
+            window.center()
+            settingsWindow = window
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func showLibrary(_ sender: Any?) {
+        if libraryWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                                  backing: .buffered, defer: false)
+            window.title = "转录库"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: TranscriptLibraryView(model: libraryStore,
+                                                                              classStore: classStore))
+            window.center()
+            libraryWindow = window
+        }
+        libraryWindow?.makeKeyAndOrderFront(nil)
+        libraryStore.reload()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func resetFloatingFrame(_ sender: Any?) {
+        captionPanel.resetFrame()
     }
 
     @objc private func toggleCaptions(_ sender: Any?) {
@@ -721,6 +810,11 @@ final class AulaApp {
         }
         if args.contains("--probe-hotkey") {
             exit(runHotKeyProbe())
+        }
+        if let i = args.firstIndex(of: "--render-settings") {
+            let path = args.count > i + 1 ? args[i + 1] : "/tmp/aula-settings.png"
+            let category = args.count > i + 2 ? args[i + 2] : "session"
+            exit(runRenderSettings(path, category: category))
         }
         if let i = args.firstIndex(of: "--render-caption") {
             let path = args.count > i + 1 ? args[i + 1] : "/tmp/aula-caption.png"

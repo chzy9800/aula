@@ -308,9 +308,60 @@ final class Sidecar: ObservableObject {
     }
 
     static func post(_ urlString: String, payload: [String: Any], timeout: TimeInterval = 8) -> [String: Any]? {
+        request(urlString, method: "POST", payload: payload, timeout: timeout)
+    }
+
+    /// DELETE（删课堂）
+    @discardableResult
+    static func deleteAny(_ urlString: String, timeout: TimeInterval = 8) -> Bool {
+        guard let url = URL(string: urlString) else { return false }
+        var req = URLRequest(url: url, timeoutInterval: timeout)
+        req.httpMethod = "DELETE"
+        var ok = false
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { _, response, _ in
+            if let http = response as? HTTPURLResponse { ok = (200..<300).contains(http.statusCode) }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 1)
+        return ok
+    }
+
+    /// 取纯文本响应（导出 Markdown 用，不是 JSON）
+    static func getString(_ urlString: String, timeout: TimeInterval = 20) -> String? {
+        guard let url = URL(string: urlString) else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: timeout)
+        req.httpMethod = "GET"
+        var text: String?
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            if let data { text = String(data: data, encoding: .utf8) }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 1)
+        return text
+    }
+
+    /// GET 版本（读课堂列表、课堂详情）。返回字典或数组都包成 Any。
+    static func getAny(_ urlString: String, timeout: TimeInterval = 8) -> Any? {
+        guard let url = URL(string: urlString) else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: timeout)
+        req.httpMethod = "GET"
+        var result: Any?
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            if let data { result = try? JSONSerialization.jsonObject(with: data) }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 1)
+        return result
+    }
+
+    private static func request(_ urlString: String, method: String,
+                                payload: [String: Any], timeout: TimeInterval) -> [String: Any]? {
         guard let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: timeout)
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         var result: [String: Any]?

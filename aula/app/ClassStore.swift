@@ -81,8 +81,12 @@ final class ClassStore: ObservableObject {
     }
 
     private let sidecar: Sidecar
+    let settings: AppSettings
+    let style: CaptionStyle
+    let speech: SpeechOutput
     private let realtime = RealtimeClient()
-    private let vad = VadSegmenter()
+    /// 段落静音阈值可调，所以 VAD 要能按当前设置重建
+    private var vad: VadSegmenter
     private let engine = AVAudioEngine()
     private let systemAudio = SystemAudioSource()
     private var converter: AVAudioConverter?
@@ -102,8 +106,17 @@ final class ClassStore: ObservableObject {
     var canStart: Bool { sidecar.state == .ready && (phase == .idle || phase == .failed) }
     var canStop: Bool { phase == .listening || phase == .starting }
 
-    init(sidecar: Sidecar) {
+    init(sidecar: Sidecar,
+         settings: AppSettings = AppSettings(),
+         style: CaptionStyle = CaptionStyle(),
+         speech: SpeechOutput = SpeechOutput()) {
         self.sidecar = sidecar
+        self.settings = settings
+        self.style = style
+        self.speech = speech
+        self.vad = VadSegmenter(silenceMs: settings.paragraphSilenceMs,
+                                minSpeechMs: settings.minSpeechMs,
+                                maxSegmentMs: settings.maxSegmentMs)
         wireRealtime()
         wireVad()
         wireService()
@@ -137,6 +150,12 @@ final class ClassStore: ObservableObject {
     // MARK: - 开始 / 停止
 
     func start() {
+        // 每次开始都按当前设置重建：用户可能刚改过段落静音阈值
+        vad = VadSegmenter(silenceMs: settings.paragraphSilenceMs,
+                           minSpeechMs: settings.minSpeechMs,
+                           maxSegmentMs: settings.maxSegmentMs)
+        wireVad()
+        speech.resetSession()
         guard sidecar.state == .ready else {
             setPhase(.failed, "服务还没起来（\(sidecar.statusText)）")
             return
@@ -153,16 +172,67 @@ final class ClassStore: ObservableObject {
     }
 
     private func createSession() {
+        // 续用上次课堂（对应 Start New Session / Keep Current Session）
+        if !settings.newSessionEachStart, let last = Self.lastSessionId,
+           let detail = Sidecar.getAny(baseURL + "/api/sessions/\(last)") as? [String: Any],
+           let sid = detail["id"] as? String {
+            sessionId = sid
+            let stored = (detail["title"] as? String) ?? ""
+            sessionTitle = stored.isEmpty ? "继续上次课堂" : stored
+            // 把已有句子填回来，界面不是空的
+            if let items = detail["utterances"] as? [[String: Any]] {
+                lines = items.compactMap { item -> Line? in
+                    guard let seq = item["seq"] as? Int,
+                          let source = item["source"] as? String else { return nil }
+                    return Line(id: seq, source: source,
+                                target: (item["target"] as? String) ?? "",
+                                refined: false,
+                                latencyMs: (item["latency_ms"] as? Int) ?? 0,
+                                at: Date())
+                }
+            }
+            realtime.connect(baseURL: baseURL, sessionId: sid)
+            return
+        }
+
         let title = Self.defaultTitle()
         guard let session = Sidecar.post(baseURL + "/api/sessions", payload: ["title": title]),
               let sid = session["id"] as? String else {
-            setPhase(.failed, "建课堂失败，看 sidecar 日志")
+            setPhase(.failed, "建课堂失败：服务端没有响应。看「打开服务日志」确认网关是否可用")
             return
         }
         sessionId = sid
+        Self.lastSessionId = sid
         sessionTitle = title
+        lines = []
         realtime.connect(baseURL: baseURL, sessionId: sid)
         // 等 ready 再开麦：服务端没准备好就发音频会被丢
+    }
+
+    /// 从转录库载入某节课继续看/继续说
+    func resume(sessionID: String, title: String) {
+        sessionId = sessionID
+        Self.lastSessionId = sessionID
+        sessionTitle = title
+        if let detail = Sidecar.getAny(baseURL + "/api/sessions/\(sessionID)") as? [String: Any],
+           let items = detail["utterances"] as? [[String: Any]] {
+            lines = items.compactMap { item -> Line? in
+                guard let seq = item["seq"] as? Int,
+                      let source = item["source"] as? String else { return nil }
+                return Line(id: seq, source: source,
+                            target: (item["target"] as? String) ?? "",
+                            refined: false,
+                            latencyMs: (item["latency_ms"] as? Int) ?? 0,
+                            at: Date())
+            }
+        }
+        setPhase(.idle, lines.isEmpty ? "已载入课堂（暂无句子）" : "已载入课堂 · \(lines.count) 句")
+    }
+
+    /// 上次课堂 id（用于「保留当前会话」模式）
+    static var lastSessionId: String? {
+        get { UserDefaults.standard.string(forKey: "aula.lastSessionId") }
+        set { UserDefaults.standard.set(newValue, forKey: "aula.lastSessionId") }
     }
 
     private func beginCapture() {
@@ -402,6 +472,10 @@ final class ClassStore: ObservableObject {
                     self.lines[index].refined = true
                 }
                 self.lines[index].streaming = false
+                // 只朗读定稿译文：读草稿或读增量会把一句话读成几十段碎片
+                if !target.isEmpty {
+                    self.speech.speak(target, settings: self.settings)
+                }
             case .status(let message):
                 self.setStatus(message)
             case .error(let message):

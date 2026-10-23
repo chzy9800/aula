@@ -89,7 +89,7 @@ aula --asr-provider whisper --asr-model small --open
 
 ### 原生应用（正在替换上面的菜单栏版）
 
-`bash scripts/build_app.sh` 装出真正独立的 **aula.app**：内嵌 Python 运行时（263MB），双击即用，不用装依赖、不用开终端、不用起服务。菜单栏常驻 + 上课界面（⌥⌘R 开始听课，⌘1 打开上课界面），逐句双语，草稿边说边出字。
+`bash scripts/build_app.sh` 装出真正独立的 **aula.app**：内嵌 Python 运行时（263MB），双击即用，不用装依赖、不用开终端、不用起服务。菜单栏常驻，⌥⌘R 全局开始/停止，⌘1 上课界面、⌘2 字幕浮窗、⌘3 服务状态、⌘4 转录库、⌘, 设置。字幕外观（字号/配色/对齐/描边）可调，浮窗可拖动缩放，译文可朗读，课后记录进转录库。
 
 ![原生上课界面](docs/screenshot-native-class.png)
 

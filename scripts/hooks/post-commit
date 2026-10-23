@@ -1,0 +1,40 @@
+#!/bin/sh
+# 每次提交后自动推送到 origin/main。
+#
+# 为什么前台推而不是 `&` 后台：后台进程会随 shell 退出被回收，推送可能半途而废，
+# 而你根本不知道。push 通常 2–5 秒，值得等一个确定的结果。
+#
+# 失败处理（这是关键，不能静默）：
+#   · 写 .git/autosync.log 留痕
+#   · 写 .git/autosync-pending 标记，下次提交时重试
+#   · 不删除任何本地提交，不回滚，不影响你继续工作
+#
+# 临时关闭：AULA_NO_AUTOSYNC=1 git commit ...
+
+[ "${AULA_NO_AUTOSYNC:-}" = "1" ] && exit 0
+
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
+# 只自动推 main；其它分支（试验分支）不该被自动同步出去
+[ "$BRANCH" = "main" ] || exit 0
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+LOG="$REPO_ROOT/.git/autosync.log"
+PENDING="$REPO_ROOT/.git/autosync-pending"
+SHA=$(git rev-parse --short HEAD)
+
+if [ -f "$PENDING" ]; then
+  echo "$(date '+%F %T') 补推上次失败（$SHA）" >> "$LOG"
+fi
+
+if git push origin "$BRANCH" --quiet >> "$LOG" 2>&1; then
+  echo "$(date '+%F %T') push OK $SHA" >> "$LOG"
+  rm -f "$PENDING"
+  echo "⇧ 已推送到 origin/$BRANCH ($SHA)"
+else
+  echo "$(date '+%F %T') push FAILED $SHA" >> "$LOG"
+  date '+%F %T' > "$PENDING"
+  echo "⚠️  推送失败（提交已保存在本地，不会丢）"
+  echo "    原因见 .git/autosync.log 末尾；恢复网络后运行：scripts/git-sync.sh"
+fi
+
+exit 0
