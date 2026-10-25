@@ -74,6 +74,7 @@ struct SettingsView: View {
     @ObservedObject var style: CaptionStyle
     @ObservedObject var classStore: ClassStore
     @ObservedObject var modelStore: ModelStore
+    @ObservedObject var providerStore: ProviderStore
 
     var body: some View {
         HStack(spacing: 0) {
@@ -382,6 +383,61 @@ struct SettingsView: View {
                 .frame(width: 260)
             }
             hint(settings.translationEngine.note)
+            if settings.translationEngine == .apple {
+                // 选了 Apple 本地翻译，服务商/模型确实用不上——但不能让用户以为"没有选项"
+                hint("当前用 Apple 本地翻译，不经过服务端模型。想看可选模型就上面切到「服务端（LLM/MT）」。")
+            }
+            if settings.translationEngine == .apple {
+                // 选了 Apple 本地翻译，服务商/模型确实用不上——但不能让用户以为"没有选项"
+                hint("当前用 Apple 本地翻译，不经过服务端模型。想看可选模型就上面切到「服务端（LLM/MT）」。")
+            }
+            if settings.translationEngine == .server && !providerStore.providers.isEmpty {
+                settingRow("翻译服务商") {
+                    Picker("", selection: Binding(
+                        get: { providerStore.currentProvider },
+                        set: { providerStore.select(provider: $0) }
+                    )) {
+                        ForEach(providerStore.providers) { preset in
+                            Text(preset.label).tag(preset.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 280)
+                }
+                settingRow("翻译模型") {
+                    Picker("", selection: Binding(
+                        get: { providerStore.currentModel },
+                        set: { providerStore.selectModel($0) }
+                    )) {
+                        ForEach(providerStore.modelsForCurrent, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 280)
+                }
+                if let current = providerStore.current {
+                    hint("当前：\(current.label) · \(providerStore.currentModel)。切换后立即生效，不用重启。"
+                         + (current.freeNote.isEmpty ? "" : "（\(current.freeNote)）"))
+                }
+                if !providerStore.error.isEmpty {
+                    Text(providerStore.error)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+                if providerStore.providers.isEmpty {
+                    // 拉不到就只显示一句提示，不画空下拉框——空框看着像功能坏了
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text(providerStore.error.isEmpty
+                             ? "正在读取服务商列表…（服务启动后自动出现）"
+                             : "服务未就绪，启动后这里会出现服务商与模型选择")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .onAppear { providerStore.refresh() }
+                }
+            }
             divider
             settingRow("译文语气") {
                 Picker("", selection: $settings.toneStyle) {

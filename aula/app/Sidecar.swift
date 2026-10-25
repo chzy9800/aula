@@ -319,6 +319,26 @@ final class Sidecar: ObservableObject {
 
     /// DELETE（删课堂）
     @discardableResult
+
+    /// PUT（改配置用）
+    static func put(_ urlString: String, payload: [String: Any], timeout: TimeInterval = 15) -> [String: Any]? {
+        guard let url = URL(string: urlString) else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: timeout)
+        req.httpMethod = "PUT"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        var result: [String: Any]?
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            if let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                result = obj
+            }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 1)
+        return result
+    }
+
     static func deleteAny(_ urlString: String, timeout: TimeInterval = 8) -> Bool {
         guard let url = URL(string: urlString) else { return false }
         var req = URLRequest(url: url, timeoutInterval: timeout)

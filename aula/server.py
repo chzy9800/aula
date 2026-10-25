@@ -164,6 +164,35 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
             "db": str(current.db_path()),
         }
 
+    @app.get("/api/providers")
+    async def list_providers() -> Dict[str, Any]:
+        """可选的翻译服务商与模型。
+
+        AirTranslate 那边是一个「Gemini 3.5 Live Translate」下拉；我们这边 provider
+        和模型是两个维度，所以一次都给出来，前端做两级选择。
+        """
+        current = engines.settings
+        items = []
+        for preset in providers.PROVIDERS:
+            if preset.kind not in ("chat", "both"):
+                continue          # 只列能翻译的
+            models = list(preset.alt_models) or [preset.model]
+            items.append({
+                "id": preset.id,
+                "label": preset.label,
+                "model": preset.model,
+                "models": models,
+                "key_required": preset.key_required,
+                "free_note": preset.free_note,
+                "current": preset.id == current.provider,
+            })
+        return {
+            "providers": items,
+            "current_provider": current.provider,
+            "current_model": current.resolved_translate_model(),
+            "translate_engine": current.translate_engine,
+        }
+
     @app.get("/api/config")
     async def get_config() -> Dict[str, Any]:
         return engines.settings.public()
