@@ -217,9 +217,11 @@ struct SettingsView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             modelStatusList
-            if settings.engineKind == .apple {
-                appleAssetRow
-            }
+            // 语言包状态**也始终显示**——用户可能在两个引擎之间来回切，
+            // 切到 whisper 时同样需要知道 Apple 语言包缺不缺（决定要不要试那条路）。
+            appleAssetRow
+            Button("重新检查") { modelStore.refresh() }
+                .controlSize(.mini)
             divider
             settingRow("转写速度") {
                 Picker("", selection: $settings.transcriptionSpeed) {
@@ -311,7 +313,8 @@ struct SettingsView: View {
                 return ("xmark.circle", .red, "Apple 语言包 es-ES：本机不支持该语言")
             case .unauthorized:
                 return ("exclamationmark.triangle.fill", .orange,
-                        granted ? "Apple 语言包：授权异常" : "Apple 语言包：先授权语音识别（上一页「权限」）")
+                        granted ? "Apple 语言包：授权异常"
+                                : "Apple 语言包：未授权语音识别（要用 Apple 引擎先去「权限」页授权）")
             }
         }()
         return HStack(alignment: .top, spacing: 8) {

@@ -33,7 +33,13 @@ final class ModelStore: ObservableObject {
         }
     }
 
-    @Published private(set) var models: [Info] = []
+    /// 预置静态列表：服务还没起时也要能看到"有哪些模型、各多大"，
+    /// 否则用户打开设置只看到一句"读不到模型状态"，等于什么都没显示。
+    @Published private(set) var models: [Info] = [
+        Info(name: "small", downloaded: false, expectedMB: 950, actualMB: 0, progress: 0, active: false),
+        Info(name: "medium", downloaded: false, expectedMB: 3000, actualMB: 0, progress: 0, active: false),
+        Info(name: "large-v3-turbo", downloaded: false, expectedMB: 3100, actualMB: 0, progress: 0, active: false),
+    ]
     @Published private(set) var current = ""
     @Published private(set) var error = ""
     @Published private(set) var busy = false
