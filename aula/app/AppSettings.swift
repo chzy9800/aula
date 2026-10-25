@@ -144,7 +144,39 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// 本地 whisper 模型。small 快但西语准确率一般；large-v3-turbo 明显更准、速度接近 medium。
+    /// 改完要重启服务（菜单 → 重启服务）才生效，首次用某个模型会自动下载。
+    enum WhisperModel: String, CaseIterable, Identifiable {
+        case small, medium, turbo
+        var id: String { rawValue }
+        var modelName: String {
+            switch self {
+            case .small: return "small"
+            case .medium: return "medium"
+            case .turbo: return "large-v3-turbo"
+            }
+        }
+        var label: String {
+            switch self {
+            case .small: return "small（快）"
+            case .medium: return "medium（准）"
+            case .turbo: return "turbo（又准又快）"
+            }
+        }
+        var note: String {
+            switch self {
+            case .small:
+                return "约 480MB，最快，但西语识别准确率一般（当前默认）。"
+            case .medium:
+                return "约 1.5GB，明显更准，CPU 上慢 2–3 倍。"
+            case .turbo:
+                return "约 800MB，准确率接近 large，速度接近 medium——效果和速度的最优折中。"
+            }
+        }
+    }
+
     @Published var engineKind: EngineKind { didSet { persist() } }
+    @Published var whisperModel: WhisperModel { didSet { persist() } }
     @Published var toneStyle: ToneStyle { didSet { persist() } }
     @Published var translationEngine: TranslationEngine { didSet { persist() } }
     @Published var outputMode: OutputMode { didSet { persist() } }
@@ -174,6 +206,7 @@ final class AppSettings: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         engineKind = EngineKind(rawValue: defaults.string(forKey: Self.prefix + "engine") ?? "") ?? .whisper
+        whisperModel = WhisperModel(rawValue: defaults.string(forKey: Self.prefix + "whisperModel") ?? "") ?? .small
         translationEngine = TranslationEngine(rawValue: defaults.string(forKey: Self.prefix + "transEngine") ?? "") ?? .server
         toneStyle = ToneStyle(rawValue: defaults.string(forKey: Self.prefix + "tone") ?? "") ?? .casual
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
@@ -194,6 +227,8 @@ final class AppSettings: ObservableObject {
     private func persist() {
         let defaults = UserDefaults.standard
         defaults.set(engineKind.rawValue, forKey: Self.prefix + "engine")
+        defaults.set(whisperModel.rawValue, forKey: Self.prefix + "whisperModel")
+        defaults.set(whisperModel.modelName, forKey: Self.prefix + "asrModel")
         defaults.set(translationEngine.rawValue, forKey: Self.prefix + "transEngine")
         defaults.set(toneStyle.rawValue, forKey: Self.prefix + "tone")
         defaults.set(outputMode.rawValue, forKey: Self.prefix + "outputMode")

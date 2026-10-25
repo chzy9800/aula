@@ -4,6 +4,31 @@
 
 ## [未发布]
 
+### 新增：whisper 模型可选（small / medium / turbo）
+
+用户问「实时字幕实现了没有」。跑完整链路验证后确认：**链路是通的，瓶颈在识别准确率**——
+当前用的是 `whisper/small`，对西语只能说"能听清大意"，专业词会错。
+
+实测（系统西语 TTS 生成的三句）：
+```
+[1] la instalación eléctrica de la vivienda, en el DOS-T-POS-D-Corrient   ← "dos tipos de corriente" 被听成拼写字母
+[2] La corriente continua es producida por generadores c                  ← 这句对
+[3] Ante este manipular el cuadro eléctrico hay que ver                   ← 大致对
+```
+注：TTS 音频缺自然连读，比真人难识别；但 small 的弱项是客观的。
+
+新增设置 → 转写 → **whisper 模型**：
+
+| 档位 | 大小 | 说明 |
+| --- | --- | --- |
+| small（快） | 480MB | 当前默认，最快，准确率一般 |
+| medium（准） | 1.5GB | 明显更准，CPU 慢 2–3 倍 |
+| turbo（又准又快） | 800MB | 准确率接近 large，速度接近 medium，**推荐** |
+
+实现：`AppSettings.whisperModel` → 写 UserDefaults → `Sidecar` 启动时注入
+`AULA_ASR_MODEL` 环境变量 → `config.resolved_asr_model()` 优先读它。
+不走配置文件（设置没持久化到磁盘），改完「重启服务」即生效，首次用某模型自动下载。
+
 ### 新增：说话人标签（零依赖聚类，不下载模型）
 
 之前说"要 diarization 得下数百 MB 权重"，其实有更轻的路子：**用三个声学特征做在线聚类**，

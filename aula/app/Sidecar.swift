@@ -104,6 +104,12 @@ final class Sidecar: ObservableObject {
             // 让 python 找到 bundle 里的 aula 源码；不写死绝对路径，跟着 bundle 走
             env["PYTHONPATH"] = root.appendingPathComponent("lib").path
             env["PYTHONUNBUFFERED"] = "1"
+            // 模型选择由 app 传下去：small 快但西语不够准，large-v3-turbo 明显更准。
+            // 走环境变量而不是配置文件，改完重启服务就生效。
+            let chosenModel = UserDefaults.standard.string(forKey: "aula.settings.asrModel") ?? ""
+            if !chosenModel.isEmpty {
+                env["AULA_ASR_MODEL"] = chosenModel
+            }
             // 子进程不该继承 app 的 GUI 相关变量，但保留用户的 AULA_* 覆盖
             env.removeValue(forKey: "__CFBundleIdentifier")
             proc.environment = env

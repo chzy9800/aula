@@ -195,6 +195,20 @@ struct SettingsView: View {
                 .frame(width: 260)
             }
             hint(settings.engineKind.note)
+            if settings.engineKind == .whisper {
+                settingRow("whisper 模型") {
+                    Picker("", selection: $settings.whisperModel) {
+                        ForEach(AppSettings.WhisperModel.allCases) { model in
+                            Text(model.label).tag(model)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 320)
+                }
+                hint(settings.whisperModel.note)
+                hint("改完要「重启服务」才生效；首次使用某个模型会自动下载（几百 MB）。")
+            }
             divider
             settingRow("转写速度") {
                 Picker("", selection: $settings.transcriptionSpeed) {

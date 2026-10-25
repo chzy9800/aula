@@ -46,6 +46,8 @@ ASR_PROVIDERS = {
     "gemini": "Google Gemini 原生音频（免费额度可用）",
 }
 
+# 本地 whisper 的默认模型。small 快但西语准确率一般；large-v3-turbo 准得多、
+# 速度也接近 medium，是"效果优先"时的首选。app 通过 AULA_ASR_MODEL 覆盖。
 DEFAULT_ASR_MODELS = {
     "openai": "whisper-1",
     "whisper": "small",
@@ -135,6 +137,12 @@ class Settings:
         # 必须用解析后的 provider（auto→whisper/gemini/...）查表：用原始 "auto"
         # 查不到就落 "whisper-1"，本地 whisper 会拿它当模型名去 HuggingFace
         # 下载一个不存在的仓库，第一次转写永久挂起（实测踩过）。
+        # 环境变量优先：app 用它切模型（改完重启 sidecar 生效），
+        # 这样不用把设置持久化到磁盘也能生效。
+        import os as _os
+        env_model = _os.environ.get("AULA_ASR_MODEL", "").strip()
+        if env_model:
+            return env_model
         return self.asr_model or DEFAULT_ASR_MODELS.get(self.pick_asr_provider(), "whisper-1")
 
     def pick_mt(self) -> str:
