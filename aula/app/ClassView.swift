@@ -25,6 +25,7 @@ struct ClassView: View {
     /// 必须单独观察：嵌套在 store 里的 ObservableObject 变更不会自动传播到视图
     @ObservedObject var style: CaptionStyle
     @ObservedObject var settings: AppSettings
+    @ObservedObject var providerStore: ProviderStore
 
     /// 菜单动作由外层注入：ClassView 不该知道窗口怎么开
     var onOpenSettings: () -> Void = {}
@@ -91,9 +92,75 @@ struct ClassView: View {
             .padding(.horizontal, 11)
             .padding(.vertical, 5)
             .background(Capsule().fill(Theme.teal.opacity(0.12)))
+
+            // 翻译模型下拉：**始终显示**。里面连引擎一起切，
+            // 否则选了 Apple 本地就看不到"有哪些模型可选"，用户以为没做。
+            Menu {
+                Section("翻译引擎") {
+                    Button {
+                        settings.translationEngine = .server
+                        providerStore.refresh()
+                    } label: {
+                        Text(settings.translationEngine == .server ? "✓ 服务端（LLM/MT）" : "服务端（LLM/MT）")
+                    }
+                    Button {
+                        settings.translationEngine = .apple
+                    } label: {
+                        Text(settings.translationEngine == .apple ? "✓ Apple 本地" : "Apple 本地")
+                    }
+                }
+                if settings.translationEngine == .server {
+                    if providerStore.providers.isEmpty {
+                        Text("服务启动后可用")
+                    } else {
+                        Section("服务商") {
+                            ForEach(providerStore.providers) { preset in
+                                Button {
+                                    providerStore.select(provider: preset.id)
+                                } label: {
+                                    Text(preset.id == providerStore.currentProvider
+                                         ? "✓ \(preset.label)" : preset.label)
+                                }
+                            }
+                        }
+                        Section("模型（\(providerStore.currentProvider)）") {
+                            ForEach(providerStore.modelsForCurrent, id: \.self) { name in
+                                Button {
+                                    providerStore.selectModel(name)
+                                } label: {
+                                    Text(name == providerStore.currentModel ? "✓ \(name)" : name)
+                                }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "character.bubble").font(.system(size: 10))
+                        Text(translateLabel).font(.system(size: 11.5, weight: .medium))
+                        Image(systemName: "chevron.down").font(.system(size: 8))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.primary.opacity(0.06)))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("切换翻译服务商与模型")
+                .onAppear { providerStore.refresh() }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
+    }
+
+    /// 工具条上显示当前翻译来源：Apple 本地 或 服务商/模型
+    private var translateLabel: String {
+        if settings.translationEngine == .apple { return "Apple 本地" }
+        if providerStore.currentModel.isEmpty {
+            return providerStore.currentProvider.isEmpty ? "翻译模型" : providerStore.currentProvider
+        }
+        return providerStore.currentModel
     }
 
     /// 优先用 WebSocket 的 asrLabel；还没连上时用 health 里的值，别显示"未连接"

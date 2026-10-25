@@ -257,7 +257,7 @@ func runRenderPreview(_ outputPath: String, count: Int = 3, listening: Bool = tr
     let t0 = Date()
     store.loadDemoLines(count: count, listening: listening)
 
-    let hosting = NSHostingView(rootView: ClassView(store: store, style: store.style, settings: store.settings))
+    let hosting = NSHostingView(rootView: ClassView(store: store, style: store.style, settings: store.settings, providerStore: ProviderStore(baseURL: { "" })))
     if ProcessInfo.processInfo.arguments.contains("dark") {
         hosting.appearance = NSAppearance(named: .darkAqua)
     }
@@ -839,7 +839,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             window.title = "aula · 上课"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: ClassView(store: classStore, style: captionStyle, settings: settings,
+            window.contentView = NSHostingView(rootView: ClassView(store: classStore, style: captionStyle, settings: settings, providerStore: providerStore,
                                           onOpenSettings: { [weak self] in self?.showSettings(nil) },
                                           onToggleCaptions: { [weak self] in self?.toggleCaptions(nil) },
                                           onDiagnose: { [weak self] in self?.runAudioDiagnosis(nil) }))
