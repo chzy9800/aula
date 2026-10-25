@@ -51,6 +51,15 @@ final class AppleSpeech {
         return granted
     }
 
+    /// 语言包是否已下载。**不依赖授权**——未授权也能查，
+    /// 这样界面可以分别告诉用户"包下了没"和"授没授权"。
+    static func assetInstalled(locale: String) -> Bool? {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)) else {
+            return nil          // nil = 这个语言本机不支持
+        }
+        return recognizer.supportsOnDeviceRecognition
+    }
+
     static func availability(locale: String) -> Availability {
         guard SFSpeechRecognizer.authorizationStatus() == .authorized else { return .unauthorized }
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)) else {

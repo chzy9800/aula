@@ -433,7 +433,9 @@ func runAppleAssetsProbe() -> Int32 {
     print("--- Apple 语言资源 ---")
     print("语音识别授权: \(AppleSpeech.authorizationStatus().rawValue)  (3=authorized, 0=未询问)")
     for code in ["es-ES", "en-US", "zh-CN"] {
-        print("识别 \(code): \(AppleSpeech.availability(locale: code))")
+        let installed = AppleSpeech.assetInstalled(locale: code)
+        let text = installed == nil ? "本机不支持" : (installed! ? "已下载" : "未下载")
+        print("语言包 \(code): \(text)")
     }
     if #available(macOS 15.0, *) {
         let pairs = [("es", "zh-Hans"), ("en", "zh-Hans"), ("es", "en")]

@@ -299,35 +299,50 @@ struct SettingsView: View {
         .onAppear { modelStore.refresh() }
     }
 
-    /// Apple 语音识别语言包状态。系统管理下载，我们只能显示状态并给引导。
+    /// Apple 语音：授权与语言包**分开显示**。
+    /// 之前合成一条判断，未授权时直接显示"先授权"，用户就永远看不到语言包到底下没下。
     private var appleAssetRow: some View {
-        let availability = AppleSpeech.availability(locale: "es-ES")
-        let granted = AppleSpeech.authorizationStatus() == .authorized
-        let (icon, color, text): (String, Color, String) = {
-            switch availability {
-            case .ready:
-                return ("checkmark.circle.fill", .green, "Apple 语言包 es-ES：已就绪（可离线识别）")
-            case .needsAsset:
-                return ("arrow.down.circle", .orange, "Apple 语言包 es-ES：需下载。系统设置 → 通用 → 语言与地区 → 添加「西班牙语」，下载完成后回来重开 app")
-            case .unsupported:
-                return ("xmark.circle", .red, "Apple 语言包 es-ES：本机不支持该语言")
-            case .unauthorized:
-                return ("exclamationmark.triangle.fill", .orange,
-                        granted ? "Apple 语言包：授权异常"
-                                : "Apple 语言包：未授权语音识别（要用 Apple 引擎先去「权限」页授权）")
+        let authorized = AppleSpeech.authorizationStatus() == .authorized
+        let installed = AppleSpeech.assetInstalled(locale: "es-ES")
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: authorized ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(authorized ? Color.green : Color.orange)
+                Text(authorized ? "语音识别授权：已授权" : "语音识别授权：未授权（要用 Apple 引擎先去「权限」页授权）")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
             }
-        }()
-        return HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundStyle(color)
-            Text(text)
-                .font(.system(size: 10.5))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: assetSymbol(installed))
+                    .font(.system(size: 11))
+                    .foregroundStyle(assetColor(installed))
+                Text(assetText(installed))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+            }
         }
         .padding(.vertical, 3)
+    }
+
+    private func assetSymbol(_ installed: Bool?) -> String {
+        guard let installed else { return "xmark.circle" }
+        return installed ? "checkmark.circle.fill" : "arrow.down.circle"
+    }
+
+    private func assetColor(_ installed: Bool?) -> Color {
+        guard let installed else { return .red }
+        return installed ? .green : .orange
+    }
+
+    private func assetText(_ installed: Bool?) -> String {
+        guard let installed else { return "识别语言包 es-ES：本机不支持该语言" }
+        if installed { return "识别语言包 es-ES：已下载（可离线识别）" }
+        return "识别语言包 es-ES：未下载。系统设置 → 通用 → 语言与地区 → 添加「西班牙语」，下载完成后重开 app"
     }
 
     private var translationPage: some View {
