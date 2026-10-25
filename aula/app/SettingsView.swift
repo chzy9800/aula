@@ -73,6 +73,7 @@ struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var style: CaptionStyle
     @ObservedObject var classStore: ClassStore
+    @ObservedObject var modelStore: ModelStore
 
     var body: some View {
         HStack(spacing: 0) {
@@ -207,7 +208,17 @@ struct SettingsView: View {
                     .frame(width: 320)
                 }
                 hint(settings.whisperModel.note)
-                hint("改完要「重启服务」才生效；首次使用某个模型会自动下载（几百 MB）。")
+                hint("改完要「重启服务」才生效。")
+            }
+            divider
+            // 模型与语言包状态：**不随引擎选择隐藏**——用户切到 Apple 后
+            // 也需要知道 whisper 模型下没下、Apple 语言包缺不缺。
+            Text("本地资源")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            modelStatusList
+            if settings.engineKind == .apple {
+                appleAssetRow
             }
             divider
             settingRow("转写速度") {
@@ -230,6 +241,90 @@ struct SettingsView: View {
                       note: "一口气说太久时强制断开，避免一句话等到下课。")
             hint("改动在下次「开始听课」时生效。")
         }
+    }
+
+    /// 模型下载状态：没这块用户切到 turbo 只会看到"点开始没反应"
+    private var modelStatusList: some View {
+        VStack(spacing: 6) {
+            ForEach(modelStore.models) { info in
+                HStack(spacing: 8) {
+                    Text(info.label)
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 54, alignment: .leading)
+
+                    if info.downloaded {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.green)
+                    } else if info.actualMB > 0 {
+                        ProgressView(value: info.progress)
+                            .progressViewStyle(.linear)
+                            .frame(width: 90)
+                    } else {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(info.statusText)
+                        .font(.system(size: 10.5).monospacedDigit())
+                        .foregroundStyle(.secondary)
+
+                    if info.active {
+                        Text("当前")
+                            .font(.system(size: 9))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Theme.teal.opacity(0.18)))
+                            .foregroundStyle(Theme.teal)
+                    }
+
+                    Spacer()
+
+                    if !info.downloaded && info.actualMB == 0 {
+                        Button("下载") { modelStore.download(info.name) }
+                            .controlSize(.mini)
+                    }
+                }
+            }
+            if !modelStore.error.isEmpty {
+                Text(modelStore.error)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.vertical, 4)
+        .onAppear { modelStore.refresh() }
+    }
+
+    /// Apple 语音识别语言包状态。系统管理下载，我们只能显示状态并给引导。
+    private var appleAssetRow: some View {
+        let availability = AppleSpeech.availability(locale: "es-ES")
+        let granted = AppleSpeech.authorizationStatus() == .authorized
+        let (icon, color, text): (String, Color, String) = {
+            switch availability {
+            case .ready:
+                return ("checkmark.circle.fill", .green, "Apple 语言包 es-ES：已就绪（可离线识别）")
+            case .needsAsset:
+                return ("arrow.down.circle", .orange, "Apple 语言包 es-ES：需下载。系统设置 → 通用 → 语言与地区 → 添加「西班牙语」，下载完成后回来重开 app")
+            case .unsupported:
+                return ("xmark.circle", .red, "Apple 语言包 es-ES：本机不支持该语言")
+            case .unauthorized:
+                return ("exclamationmark.triangle.fill", .orange,
+                        granted ? "Apple 语言包：授权异常" : "Apple 语言包：先授权语音识别（上一页「权限」）")
+            }
+        }()
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundStyle(color)
+            Text(text)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(.vertical, 3)
     }
 
     private var translationPage: some View {

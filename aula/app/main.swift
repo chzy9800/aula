@@ -399,7 +399,8 @@ func runRenderSettings(_ outputPath: String, category: String, lang: String = "z
     if let parsed = SettingsModel.Category(rawValue: category) { model.category = parsed }
     let store = ClassStore(sidecar: Sidecar())
     let hosting = NSHostingView(rootView: SettingsView(model: model, settings: store.settings,
-                                                       style: store.style, classStore: store))
+                                                       style: store.style, classStore: store,
+                                                       modelStore: ModelStore(baseURL: { "" })))
     if ProcessInfo.processInfo.arguments.contains("dark") {
         hosting.appearance = NSAppearance(named: .darkAqua)
     }
@@ -626,6 +627,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var libraryStore = TranscriptLibraryStore(baseURL: { [weak self] in
         self?.sidecar.baseURL ?? ""
     })
+    private lazy var modelStore = ModelStore(baseURL: { [weak self] in
+        self?.sidecar.baseURL ?? ""
+    })
     private lazy var classStore = ClassStore(sidecar: sidecar,
                                              settings: settings,
                                              style: captionStyle,
@@ -850,7 +854,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.contentView = NSHostingView(rootView: SettingsView(model: settingsModel,
                                                                      settings: settings,
                                                                      style: captionStyle,
-                                                                     classStore: classStore))
+                                                                     classStore: classStore,
+                                                                     modelStore: modelStore))
             window.center()
             settingsWindow = window
         }

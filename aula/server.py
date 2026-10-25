@@ -33,7 +33,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -64,6 +64,8 @@ _TRANSLATION_PRIORITY: Dict[str, str] = {}
 _TONE: Dict[str, str] = {}
 # 说话人聚类：按 session 隔离，避免不同课堂互相污染
 _SPEAKERS = SpeakerCache(max_speakers=3)
+# 哪些模型正在后台下载，避免重复触发
+_downloading: Dict[str, bool] = {}
 # 本机助手子进程，按 session 记账
 _CAPTURES: Dict[str, subprocess.Popen] = {}
 
@@ -352,6 +354,75 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
             "notes": notes.to_dict(),
             "model": engines.settings.resolved_summary_model(),
         }
+
+    # —— 本地模型管理 ——
+
+    # 模型名 → (HuggingFace 仓库, 约多少 MB)。大小用于算下载进度。
+    WHISPER_MODELS = {
+        "small": ("Systran/faster-whisper-small", 950),
+        "medium": ("Systran/faster-whisper-medium", 3000),
+        "large-v3-turbo": ("Systran/faster-whisper-large-v3", 3100),
+    }
+
+    def _model_dir(repo: str) -> Path:
+        return Path.home() / ".cache" / "huggingface" / "hub" / ("models--" + repo.replace("/", "--"))
+
+    def _dir_size_mb(path: Path) -> float:
+        if not path.exists():
+            return 0.0
+        total = 0
+        for item in path.rglob("*"):
+            if item.is_file():
+                try:
+                    total += item.stat().st_size
+                except OSError:
+                    pass
+        return total / (1024 * 1024)
+
+    @app.get("/api/models")
+    async def list_models() -> Dict[str, Any]:
+        """本地 whisper 模型状态。
+
+        下载进度靠**目录实际大小 / 预期大小**算——huggingface_hub 的 tqdm 只在
+        stderr 里，前端拿不到；而下载过程中目录会持续增长，用大小反推百分比足够准。
+        """
+        items = []
+        for name, (repo, expected_mb) in WHISPER_MODELS.items():
+            path = _model_dir(repo)
+            actual_mb = await asyncio.to_thread(_dir_size_mb, path)
+            # 有明显体积才算下完（下到一半的目录也在增长）
+            done = actual_mb >= expected_mb * 0.85
+            items.append({
+                "name": name,
+                "downloaded": done,
+                "expected_mb": expected_mb,
+                "actual_mb": round(actual_mb, 1),
+                "progress": min(1.0, round(actual_mb / expected_mb, 3)) if expected_mb else 0.0,
+                "active": name == engines.settings.resolved_asr_model(),
+            })
+        return {"models": items, "current": engines.settings.resolved_asr_model()}
+
+    @app.post("/api/models/{name}/download")
+    async def download_model(name: str, background: BackgroundTasks) -> Dict[str, Any]:
+        """后台下载一个模型。首次构造 WhisperModel 就会触发下载。"""
+        if name not in WHISPER_MODELS:
+            raise HTTPException(status_code=400, detail=f"未知模型：{name}")
+        if _downloading.get(name):
+            return {"status": "already-running", "name": name}
+        _downloading[name] = True
+
+        def _run() -> None:
+            try:
+                from faster_whisper import WhisperModel
+                WhisperModel(name, device="auto", compute_type="int8")
+                logger.info("模型下载完成：%s", name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("模型下载失败 %s：%s", name, exc)
+            finally:
+                _downloading[name] = False
+
+        background.add_task(asyncio.to_thread, _run)
+        return {"status": "started", "name": name}
 
     # —— 文件转写 ——
 
