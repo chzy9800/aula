@@ -42,9 +42,11 @@ final class AppleSpeech {
             granted = (status == .authorized)
             done = true
         }
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(60)
         while !done && Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+            // 必须 .common：从按钮回调里调用时当前处于 eventTracking 模式，
+            // 只跑 .default 会收不到弹窗事件，一直等到超时（表现为"点了没反应"）。
+            RunLoop.current.run(mode: .common, before: Date().addingTimeInterval(0.1))
         }
         return granted
     }
@@ -179,7 +181,7 @@ final class AppleSpeech {
         }
         let deadline = Date().addingTimeInterval(timeout)
         while !finished && Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(mode: .common, before: Date().addingTimeInterval(0.1))
         }
         guard !finalText.isEmpty else { return nil }
         return (finalText, first ?? 0, Date().timeIntervalSince(started))

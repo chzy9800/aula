@@ -61,6 +61,8 @@ final class SettingsModel: ObservableObject {
     }
 
     @Published var category: Category = .session
+    /// 正在等待系统授权弹窗——按钮据此显示"等待授权…"
+    @Published var requestingSpeechAuth = false
 }
 
 // MARK: - 设置窗口
@@ -393,11 +395,15 @@ struct SettingsView: View {
                             ? "已授权。Apple 语音引擎可用（识别语言包需另装）"
                             : "用「Apple 语音」引擎时必须授权。点右侧按钮会弹系统窗",
                           settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition",
-                          actionTitle: speechStatus == .notDetermined ? "请求授权" : "系统设置",
+                          actionTitle: model.requestingSpeechAuth ? "等待授权…" : (speechStatus == .notDetermined ? "请求授权" : "系统设置"),
                           onAction: speechStatus == .notDetermined ? {
-                              // 内部跑 RunLoop 等用户点，所以界面会短暂"卡住"——弹窗就在眼前
-                              _ = AppleSpeech.requestAuthorization()
-                              model.objectWillChange.send()
+                              // 先让 SwiftUI 把"正在请求…"画出来，再进阻塞等待，
+                              // 否则用户看到的是点了没反应
+                              model.requestingSpeechAuth = true
+                              DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                  _ = AppleSpeech.requestAuthorization()
+                                  model.requestingSpeechAuth = false
+                              }
                           } : nil)
             divider
             hint("权限记在发起进程上。命令行跑出来的「已授权」不代表 app 已授权。")
