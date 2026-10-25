@@ -290,6 +290,15 @@ struct ClassView: View {
                         .frame(width: 4, height: 4)
                         .help("这句已由大模型精译")
                 }
+                if !line.speaker.isEmpty {
+                    Text(line.speaker)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.teal)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 0.5)
+                        .background(Capsule().fill(Theme.teal.opacity(0.16)))
+                        .help("说话人（声学特征聚类，仅供参考）")
+                }
             }
             if settings.outputMode != .translationOnly {
             Text(line.source)

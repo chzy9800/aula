@@ -12,7 +12,7 @@ final class RealtimeClient {
     enum Event {
         case ready(asr: String, model: String, sampleRate: Int)
         case partial(key: Int, source: String, target: String)
-        case transcript(seq: Int, key: Int, source: String, target: String, latencyMs: Int)
+        case transcript(seq: Int, key: Int, source: String, target: String, latencyMs: Int, speaker: String)
         /// 流式译文的增量：字幕"逐字长出来"靠它，不是整句替换
         case translationDelta(seq: Int, delta: String)
         case translation(seq: Int, target: String)
@@ -88,7 +88,8 @@ final class RealtimeClient {
                              key: obj["key"] as? Int ?? 0,
                              source: u["source"] as? String ?? "",
                              target: u["target"] as? String ?? "",
-                             latencyMs: obj["latency_ms"] as? Int ?? 0))
+                             latencyMs: obj["latency_ms"] as? Int ?? 0,
+                             speaker: u["speaker"] as? String ?? ""))
         case "translation_delta":
             emit(.translationDelta(seq: obj["seq"] as? Int ?? 0,
                                    delta: obj["delta"] as? String ?? ""))

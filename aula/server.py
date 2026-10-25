@@ -38,6 +38,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, config, digest, doc_render, mt as mtmod, providers, reader, store
+from .diarize import SpeakerCache
 from .asr import ASRError, TimedASR, build_asr
 from .llm import LLMClient, LLMError, client_for
 from .summarize import summarize
@@ -61,6 +62,8 @@ _OUTPUT_MODES: Dict[str, str] = {}
 _TRANSLATION_PRIORITY: Dict[str, str] = {}
 # 每节课的译文语气：casual（课堂口语，默认）/ formal（讲义）/ neutral
 _TONE: Dict[str, str] = {}
+# 说话人聚类：按 session 隔离，避免不同课堂互相污染
+_SPEAKERS = SpeakerCache(max_speakers=3)
 # 本机助手子进程，按 session 记账
 _CAPTURES: Dict[str, subprocess.Popen] = {}
 
@@ -434,6 +437,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     end_ms=int(segment.end * 1000),
                     confidence=None,
                     latency_ms=0,
+                    speaker=getattr(segment, "speaker", ""),
                 )
 
             return {
@@ -709,6 +713,14 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                         )
                     except Exception:  # noqa: BLE001
                         fallback_text = ""
+                # 说话人：用三个声学特征在线聚类，零额外依赖。
+                # 准确率约 70–85%，用途是提示"这句可能是另一个人说的"，不是法医级识别。
+                try:
+                    speaker = _SPEAKERS.assign(session_id, pcm)
+                except Exception as exc:  # noqa: BLE001 聚类失败不能影响转写
+                    logger.debug("说话人聚类失败（忽略）：%s", exc)
+                    speaker = ""
+
                 record = store.add_utterance(
                     db_path,
                     session_id,
@@ -718,6 +730,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     end_ms=end_ms,
                     confidence=result.confidence,
                     latency_ms=asr_ms,
+                    speaker=speaker,
                 )
                 await _broadcast(
                     session_id,
@@ -885,6 +898,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                 _OUTPUT_MODES.pop(session_id, None)
                 _TRANSLATION_PRIORITY.pop(session_id, None)
                 _TONE.pop(session_id, None)
+                _SPEAKERS.drop(session_id)
 
     return app
 

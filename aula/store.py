@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS utterances (
     target      TEXT NOT NULL DEFAULT '',
     confidence  REAL,
     latency_ms  INTEGER,
+    speaker     TEXT,
     created_at  TEXT NOT NULL
 );
 
@@ -89,6 +90,8 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
 def init_db(db_path: Path) -> None:
     with _connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        # 必须在 with 内：出了这个块 conn 已关闭
+        _ensure_utterance_columns(conn)
 
 
 def _row(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
@@ -174,6 +177,13 @@ def delete_session(db_path: Path, session_id: str) -> bool:
 # —— 转写 ——
 
 
+def _ensure_utterance_columns(conn: "sqlite3.Connection") -> None:
+    """给老库补 speaker 列。SQLite 没有 IF NOT EXISTS for column，只能先查。"""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(utterances)")}
+    if "speaker" not in columns:
+        conn.execute("ALTER TABLE utterances ADD COLUMN speaker TEXT")
+
+
 def add_utterance(
     db_path: Path,
     session_id: str,
@@ -183,6 +193,7 @@ def add_utterance(
     end_ms: int = 0,
     confidence: Optional[float] = None,
     latency_ms: Optional[int] = None,
+    speaker: str = "",
 ) -> Dict[str, Any]:
     stamp = _now()
     with _connect(db_path) as conn:
@@ -190,9 +201,10 @@ def add_utterance(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM utterances WHERE session_id = ?", (session_id,)
         ).fetchone()[0]
         cursor = conn.execute(
-            "INSERT INTO utterances (session_id, seq, start_ms, end_ms, source, target, confidence, latency_ms, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (session_id, seq, start_ms, end_ms, source, target, confidence, latency_ms, stamp),
+            "INSERT INTO utterances (session_id, seq, start_ms, end_ms, source, target, confidence, latency_ms, speaker, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, seq, start_ms, end_ms, source, target, confidence, latency_ms,
+             speaker or None, stamp),
         )
         conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (stamp, session_id))
         row = conn.execute("SELECT * FROM utterances WHERE id = ?", (cursor.lastrowid,)).fetchone()

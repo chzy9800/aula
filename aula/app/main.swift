@@ -134,7 +134,7 @@ func runClassProbe(_ pcmDir: String, withDigest: Bool = false, priority: String 
             readyCount += 1
         case .partial:
             partials += 1
-        case .transcript(let seq, _, let source, let target, _):
+        case .transcript(let seq, _, let source, let target, _, _):
             transcripts += 1
             sources[seq] = source
             if !target.isEmpty {

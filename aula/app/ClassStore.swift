@@ -17,6 +17,8 @@ final class ClassStore: ObservableObject {
         var at: Date
         /// 译文还在流式到达——界面据此在末尾画一个光标，让人知道"还没写完"
         var streaming: Bool = false
+        /// 说话人标签（A/B/C）。轻量聚类算出来的，空表示没判断出来。
+        var speaker: String = ""
 
         /// 复用同一个 formatter：列表长起来后每行 new 一个是明显的浪费
         private static let timeFormatter: DateFormatter = {
@@ -670,15 +672,16 @@ final class ClassStore: ObservableObject {
                                 refined: false, latencyMs: 0, at: Date())
                 self.draft = line
                 self.setStatus("正在识别…")
-            case .transcript(let seq, _, let source, let target, let latency):
+            case .transcript(let seq, _, let source, let target, let latency, let speaker):
                 self.draft = nil
                 if let index = self.lines.firstIndex(where: { $0.id == seq }) {
                     self.lines[index].source = source
                     self.lines[index].target = target
+                    self.lines[index].speaker = speaker
                 } else {
                     self.lines.append(Line(id: seq, source: source, target: target,
                                            refined: false, latencyMs: latency, at: Date(),
-                                           streaming: true))
+                                           streaming: true, speaker: speaker))
                 }
                 self.setStatus("转录中 · \(self.lines.count) 句 · 上句 \(latency)ms")
             case .translationDelta(let seq, let delta):
