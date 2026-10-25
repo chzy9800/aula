@@ -355,23 +355,30 @@ final class ClassStore: ObservableObject {
                     self.lines[index].target = translated
                     self.lines[index].refined = true
                     self.speech.speak(translated, settings: self.settings)
+                    self.lines[index].streaming = false
+                    self.persistLine(seq: seq, source: text, target: translated, sid: sid)
+                    return
                 }
-                self.lines[index].streaming = false
-                // 入库（服务端只存不再翻）
-                if let sid {
-                    let url = self.baseURL + "/api/sessions/\(sid)/utterance"
-                    let payload: [String: Any] = ["source": text,
-                                                  "target": translated ?? ""]
-                    DispatchQueue.global(qos: .utility).async {
-                        _ = Sidecar.post(url, payload: payload, timeout: 20)
-                    }
-                }
+                // 关键：Apple 翻译失败不能静默——否则就是"有原文没译文"，用户以为坏了。
+                // 自动退回服务端翻译，并记日志说明降级了。
+                AppLog.write("apple-translate: 这句失败，降级到服务端翻译「\(String(text.prefix(24)))」")
+                self.translateOnServer(seq: seq, text: text, sid: sid)
             }
             return
         }
 
         // 服务端翻译
-        guard let sid else { return }
+        translateOnServer(seq: seq, text: text, sid: sid)
+    }
+
+    /// 服务端翻译（Apple 本地翻译失败时的降级路径，也是默认路径）
+    private func translateOnServer(seq: Int, text: String, sid: String?) {
+        guard let sid else {
+            if let index = lines.firstIndex(where: { $0.id == seq }) {
+                lines[index].streaming = false
+            }
+            return
+        }
         let url = baseURL + "/api/sessions/\(sid)/utterance"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Sidecar.post(url, payload: ["source": text, "translate": true], timeout: 40)
@@ -382,9 +389,20 @@ final class ClassStore: ObservableObject {
                     self.lines[index].target = target
                     self.lines[index].refined = true
                     self.speech.speak(target, settings: self.settings)
+                } else {
+                    AppLog.write("translate: 服务端也没给译文，这句留空（原文已保留）")
                 }
                 self.lines[index].streaming = false
             }
+        }
+    }
+
+    /// 把已翻译的一句写进库（Apple 本地翻译路径用）
+    private func persistLine(seq: Int, source: String, target: String, sid: String?) {
+        guard let sid else { return }
+        let url = baseURL + "/api/sessions/\(sid)/utterance"
+        DispatchQueue.global(qos: .utility).async {
+            _ = Sidecar.post(url, payload: ["source": source, "target": target], timeout: 20)
         }
     }
 
