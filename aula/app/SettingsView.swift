@@ -385,10 +385,20 @@ struct SettingsView: View {
                           granted: SystemAudioSource.hasPermission(),
                           detail: "抓系统声音（网课）时必需。授权后需重启 app 才真正放行",
                           settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            let speechStatus = SFSpeechRecognizer.authorizationStatus()
+            let speechGranted = speechStatus == .authorized
             permissionRow("语音识别",
-                          granted: SFSpeechRecognizer.authorizationStatus() == .authorized,
-                          detail: "本机语音能力（可选，aula 用自有 whisper 时不依赖）",
-                          settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")
+                          granted: speechGranted,
+                          detail: speechGranted
+                            ? "已授权。Apple 语音引擎可用（识别语言包需另装）"
+                            : "用「Apple 语音」引擎时必须授权。点右侧按钮会弹系统窗",
+                          settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition",
+                          actionTitle: speechStatus == .notDetermined ? "请求授权" : "系统设置",
+                          onAction: speechStatus == .notDetermined ? {
+                              // 内部跑 RunLoop 等用户点，所以界面会短暂"卡住"——弹窗就在眼前
+                              _ = AppleSpeech.requestAuthorization()
+                              model.objectWillChange.send()
+                          } : nil)
             divider
             hint("权限记在发起进程上。命令行跑出来的「已授权」不代表 app 已授权。")
             Button("重新检查") { model.objectWillChange.send() }
@@ -489,7 +499,9 @@ struct SettingsView: View {
     }
 
     private func permissionRow(_ title: String, granted: Bool,
-                               detail: String, settingsURL: String) -> some View {
+                               detail: String, settingsURL: String,
+                               actionTitle: String = "系统设置",
+                               onAction: (() -> Void)? = nil) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .foregroundStyle(granted ? Color.green : Color.orange)
@@ -499,8 +511,12 @@ struct SettingsView: View {
                 Text(detail).font(.system(size: 10.5)).foregroundStyle(.secondary)
             }
             Spacer()
-            Button("系统设置") {
-                if let url = URL(string: settingsURL) { NSWorkspace.shared.open(url) }
+            Button(actionTitle) {
+                if let onAction {
+                    onAction()
+                } else if let url = URL(string: settingsURL) {
+                    NSWorkspace.shared.open(url)
+                }
             }
             .controlSize(.small)
         }
