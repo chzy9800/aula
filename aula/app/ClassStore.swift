@@ -173,6 +173,8 @@ final class ClassStore: ObservableObject {
     // MARK: - 开始 / 停止
 
     func start() {
+        AppLog.write("start: 引擎=\(settings.engineKind.rawValue) 音源=\(sourceKind.rawValue) "
+                     + "服务=\(sidecar.statusText) 可开始=\(canStart)")
         if settings.engineKind == .apple {
             beginAppleMode()
             return
@@ -490,10 +492,16 @@ final class ClassStore: ObservableObject {
     private func wireVad() {
         vad.onSegment = { [weak self] frame in
             self?.segmentCount += 1
+            AppLog.write("vad: 定稿段 \(frame.count / 32)ms（累计 \(self?.segmentCount ?? 0)）")
             self?.realtime.send(frame)
         }
         vad.onPartial = { [weak self] frame in
             self?.partialCount += 1
+            // 草稿每 0.5-1.2 秒一次，全记会刷屏：只记前 3 次和每 10 次
+            let count = self?.partialCount ?? 0
+            if count <= 3 || count % 10 == 0 {
+                AppLog.write("vad: 草稿段 \(frame.count / 32)ms（累计 \(count)）")
+            }
             self?.realtime.send(frame)
         }
         // 系统声音与麦克风走同一个 VAD，切句口径一致
@@ -659,6 +667,7 @@ final class ClassStore: ObservableObject {
             guard let self else { return }
             switch event {
             case .ready(let asr, let model, _):
+                AppLog.write("ws: ready asr=\(asr)/\(model)")
                 self.asrLabel = "\(asr)/\(model)"
                 // 告诉服务端这节课要不要翻译（「只要原文」时整条 LLM 调用都省掉）
                 self.realtime.sendText("{\"output_mode\":\"\(self.settings.outputMode.serverValue)\"}")
@@ -666,6 +675,9 @@ final class ClassStore: ObservableObject {
                 self.realtime.sendText("{\"tone\":\"\(self.settings.toneStyle.rawValue)\"}")
                 self.beginCapture()
             case .partial(_, let source, let target):
+                if self.partialCount <= 3 {
+                    AppLog.write("ws: 收到草稿「\(String(source.prefix(30)))」")
+                }
                 guard !source.isEmpty else { return }
                 // 草稿行固定一个负数 id，逐帧覆盖原位，不追加
                 let line = Line(id: self.draftKey, source: source, target: target,
@@ -673,6 +685,9 @@ final class ClassStore: ObservableObject {
                 self.draft = line
                 self.setStatus("正在识别…")
             case .transcript(let seq, _, let source, let target, let latency, let speaker):
+                if self.segmentCount <= 3 {
+                    AppLog.write("ws: 收到定稿 seq=\(seq) 延迟=\(latency)ms「\(String(source.prefix(30)))」")
+                }
                 self.draft = nil
                 if let index = self.lines.firstIndex(where: { $0.id == seq }) {
                     self.lines[index].source = source
