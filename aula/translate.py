@@ -115,15 +115,26 @@ def _is_continuation(text: str, source_lang: str) -> bool:
 # 一句对一句不合并。两者冲突时以"不增删信息"为先——DeepL 的自然不等于可以改写内容。
 ABSTAIN = "<?>"
 
+# 译文语气。DeepL 的 formality 思路：同一段话，课堂口语和正式讲义该是两种说法。
+# 默认 casual（课堂场景），formal 给讲座/答辩用。
+TONE_HINTS = {
+    "casual": "译文用口语化的中文，像同声传译在讲台上说的话：短句、少用「的」字堆叠、不用书面腔。",
+    "formal": "译文用规范的书面语：术语完整、句式严谨，像正式讲义或技术文档，不要口语化。",
+    "neutral": "译文用中性书面语：清楚准确、不刻意口语化，也不过度正式。",
+}
+DEFAULT_TONE = "casual"
+
 SYSTEM = """你是课堂同声传译。把用户给出的{src}句子翻译成{dst}。
 
 硬性规则：
 1. 只输出译文本身。不要原文、不要解释、不要引号、不要"翻译："之类的前缀。
-2. **忠实优先，但要说人话**：不总结、不合并、不增补、不省略；同时译文必须符合中文的自然说法——
-   老师口语讲课就译成口语化的中文，不要写成书面报告体。两者冲突时以"不增删信息"为先：
-   可以调整语序、拆分长句让它像中文，但不许为了通顺而多加或省略内容。
+2. **忠实优先，但要说人话**：不总结、不合并、不增补、不省略；同时译文必须符合中文的自然说法。
+   语气要求：{tone}
+   两者冲突时以"不增删信息"为先：可以调整语序、拆分长句让它像中文，但不许为了通顺而多加或省略内容。
 3. 数字、单位、人名、公式、代码、URL 保持原样，不得换算。
-4. 专业术语用准确译法，首次出现时在译文后用括号附上原文。**术语表里给定的译法必须原样使用，不得替换成同义词。**
+4. 专业术语用准确译法。首次出现的术语可以在译文后用**全角括号**附上原文，写法如「配电柜（cuadro eléctrico）」；
+   **只在你能准确写出原文时这么做**——不确定就不加任何括号，绝对不要输出 (?)、（…）、（原文）这类占位符。
+   术语表里给定的译法必须原样使用，不得替换成同义词。
 5. 句子可能是被断句切断的半句：只依据"上一句"消歧，照原样译，不要凭空补全。
 6. 原文只是语气词、口误、重复噪音时，输出空字符串。
 7. 如果原文残缺或混乱到无法确定意思（识别错误、断词严重），输出 {abstain}，**不要猜**。
@@ -161,7 +172,7 @@ class Translator:
         # 上一句原文：只在"本句像残句"时作为上下文附上
         self._prev_source = ""
 
-    def translate(self, text: str, timeout: int = 20) -> str:
+    def translate(self, text: str, timeout: int = 20, tone: str = DEFAULT_TONE) -> str:
         text = (text or "").strip()
         if not text or not self.enabled:
             return text
@@ -184,7 +195,7 @@ class Translator:
                     self._prev_source = text
                     return translated
 
-        system, user, budget = self._prepare(text)
+        system, user, budget = self._prepare(text, tone=tone)
         try:
             result = self.client.chat(
                 [
@@ -213,12 +224,13 @@ class Translator:
         self._prev_source = text
         return result
 
-    def _prepare(self, text: str) -> "tuple[str, str, int]":
+    def _prepare(self, text: str, tone: str = DEFAULT_TONE) -> "tuple[str, str, int]":
         """提示词与 token 预算。translate / translate_stream 共用一份，避免两条路径漂移。"""
         system = SYSTEM.format(
             src=LANG_NAMES.get(self.source_lang, self.source_lang),
             dst=LANG_NAMES.get(self.target_lang, self.target_lang),
             abstain=ABSTAIN,
+            tone=TONE_HINTS.get(tone, TONE_HINTS[DEFAULT_TONE]),
         )
         if self.glossary:
             pairs = "；".join("%s→%s" % (k, v) for k, v in list(self.glossary.items())[:40])
@@ -246,7 +258,8 @@ class Translator:
             budget = min(1200, budget + 400)
         return system, user, budget
 
-    def translate_stream(self, text: str, on_delta: Callable[[str], None], timeout: int = 40) -> str:
+    def translate_stream(self, text: str, on_delta: Callable[[str], None],
+                         timeout: int = 40, tone: str = DEFAULT_TONE) -> str:
         """流式翻译：每写完一小段就把增量交给 ``on_delta``，返回拼好的全文。
 
         为什么另开一条：整句出来的译文在字幕上是"跳一下再被覆盖"，课堂上很扎眼；
@@ -273,7 +286,7 @@ class Translator:
                 on_delta(fallback)
             return fallback
 
-        system, user, budget = self._prepare(text)
+        system, user, budget = self._prepare(text, tone=tone)
         try:
             result = self.client.chat_stream(
                 [

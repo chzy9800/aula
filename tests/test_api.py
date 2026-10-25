@@ -49,6 +49,8 @@ class FakeLLM:
         接口加了流式以后，替身必须跟着实现——否则服务端走的是"没有流式就退回整句"那条路，
         真正的增量推送就永远测不到。"""
         self.translate_calls += 1
+        self.last_system = next((m.get("content", "") for m in messages
+                                 if m.get("role") == "system"), "")
         pieces = ["中文", "译文"]
         for piece in pieces:
             if on_delta is not None:
@@ -382,6 +384,49 @@ class ApiTest(unittest.TestCase):
                               "首译必须随原文一起到，否则实时感就没了")
         finally:
             self.app.state.engines.fast_mt = None
+
+    def test_websocket_tone_reaches_prompt(self):
+        """译文语气：声明 formal 后，提示词里必须真的出现书面语要求。
+
+        只断言回执是不够的——回执对了但没进提示词，等于没做。
+        """
+        sid = self.new_session()
+        pcm = b"\x00\x00" * 16000
+        header = struct.pack("<II", 0, 1000)
+
+        with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
+            self.assertEqual(ws.receive_json()["type"], "ready")
+            ws.send_text('{"tone":"formal"}')
+            ack = ws.receive_json()
+            self.assertEqual(ack["type"], "tone")
+            self.assertEqual(ack["mode"], "formal")
+
+            ws.send_bytes(header + pcm)
+            self.assertEqual(ws.receive_json()["type"], "transcript")
+            # 等到收尾的完整译文，说明翻译已经跑过
+            message = ws.receive_json()
+            while message["type"] != "translation":
+                message = ws.receive_json()
+
+        system_prompt = getattr(self.app.state.engines.client, "last_system", "")
+        self.assertIn("书面语", system_prompt, "formal 语气必须真的写进提示词")
+
+    def test_websocket_default_tone_is_casual(self):
+        """不声明语气时用口语化——课堂是默认场景。"""
+        sid = self.new_session()
+        pcm = b"\x00\x00" * 16000
+        header = struct.pack("<II", 0, 1000)
+
+        with self.client.websocket_connect(f"/ws/live?session_id={sid}") as ws:
+            self.assertEqual(ws.receive_json()["type"], "ready")
+            ws.send_bytes(header + pcm)
+            self.assertEqual(ws.receive_json()["type"], "transcript")
+            message = ws.receive_json()
+            while message["type"] != "translation":
+                message = ws.receive_json()
+
+        system_prompt = getattr(self.app.state.engines.client, "last_system", "")
+        self.assertIn("口语化", system_prompt)
 
     def test_websocket_source_only_skips_translation(self):
         """「只要原文」模式：服务端完全不做翻译，省掉整条 LLM 调用。

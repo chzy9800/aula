@@ -59,6 +59,8 @@ _HUBS: Dict[str, Set[WebSocket]] = {}
 _OUTPUT_MODES: Dict[str, str] = {}
 # 翻译优先级：quality（默认，只等 LLM）/ speed（MT 先出，LLM 再修）
 _TRANSLATION_PRIORITY: Dict[str, str] = {}
+# 每节课的译文语气：casual（课堂口语，默认）/ formal（讲义）/ neutral
+_TONE: Dict[str, str] = {}
 # 本机助手子进程，按 session 记账
 _CAPTURES: Dict[str, subprocess.Popen] = {}
 
@@ -415,7 +417,8 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                 if want_translate and engines.translator.enabled:
                     try:
                         translated = await asyncio.to_thread(
-                            engines.translator.translate, segment.text
+                            engines.translator.translate, segment.text, 20,
+                            str(payload.get("tone") or "casual")
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("文件转写：这一句翻译失败（原文保留）：%s", exc)
@@ -560,7 +563,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
 
     @app.websocket("/ws/live")
     async def live(websocket: WebSocket, session_id: str = Query(...)) -> None:
-        global _OUTPUT_MODES, _TRANSLATION_PRIORITY   # 跨连接共享（赋值需要 global）
+        global _OUTPUT_MODES, _TRANSLATION_PRIORITY, _TONE   # 跨连接共享（赋值需要 global）
         await websocket.accept()
         db_path = engines.settings.db_path()
         session = store.get_session(db_path, session_id)
@@ -629,7 +632,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                      "source": text, "target": ""},
                 )
 
-        async def stream_translate(seg_text: str, seq: int) -> str:
+        async def stream_translate(seg_text: str, seq: int, tone: str = "casual") -> str:
             """把精译的增量逐个广播出去，返回拼好的全文。
 
             线程模型：``translate_stream`` 是阻塞的（urllib 逐行读 SSE），跑在
@@ -645,7 +648,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
 
             def work() -> str:
                 try:
-                    return engines.translator.translate_stream(seg_text, emit)
+                    return engines.translator.translate_stream(seg_text, emit, 40, tone)
                 finally:
                     loop.call_soon_threadsafe(queue.put_nowait, done_marker)
 
@@ -694,6 +697,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                 #   source_only——完全不做翻译
                 source_only = _OUTPUT_MODES.get(session_id) == "source_only"
                 speed_mode = _TRANSLATION_PRIORITY.get(session_id) == "speed"
+                tone = _TONE.get(session_id, "casual")
                 uses_llm = engines.translator.enabled and not source_only
                 fallback_text = ""
                 want_fast = (not uses_llm or speed_mode) and not source_only
@@ -731,13 +735,13 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                         # 屏幕上已经有首译，再推增量会叠在它后面；等完整结果再决定替换
                         try:
                             translated = await asyncio.to_thread(
-                                engines.translator.translate, text
+                                engines.translator.translate, text, 20, tone
                             )
                         except Exception as exc:  # noqa: BLE001
                             logger.warning("精译失败（首译已在屏）：%s", exc)
                             translated = ""
                     else:
-                        translated = await stream_translate(text, record["seq"])
+                        translated = await stream_translate(text, record["seq"], tone)
                     if translated and ABSTAIN in translated:
                         # 模型弃权：把已推出去的增量作废，让界面显示"未译"
                         logger.info("翻译弃权（seq=%s）：%s", record["seq"], text[:40])
@@ -842,6 +846,14 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                     elif '"flush"' in text_frame:
                         await queue.join()
                         await _broadcast(session_id, {"type": "flushed"})
+                    elif '"tone"' in text_frame:
+                        try:
+                            tone_frame = json.loads(text_frame)
+                        except ValueError:
+                            tone_frame = {}
+                        tone = str(tone_frame.get("tone") or "casual")
+                        _TONE[session_id] = tone
+                        await _broadcast(session_id, {"type": "tone", "mode": tone})
                     elif '"translation_priority"' in text_frame:
                         try:
                             prio_frame = json.loads(text_frame)
@@ -872,6 +884,7 @@ def create_app(settings: Optional[config.Settings] = None) -> FastAPI:
                 _HUBS.pop(session_id, None)
                 _OUTPUT_MODES.pop(session_id, None)
                 _TRANSLATION_PRIORITY.pop(session_id, None)
+                _TONE.pop(session_id, None)
 
     return app
 

@@ -124,7 +124,28 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// 译文语气（DeepL 的 formality 思路）。课堂默认口语化，讲座/答辩可切书面。
+    enum ToneStyle: String, CaseIterable, Identifiable {
+        case casual, formal, neutral
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .casual: return "口语化"
+            case .formal: return "书面"
+            case .neutral: return "中性"
+            }
+        }
+        var note: String {
+            switch self {
+            case .casual: return "像同声传译在讲台上说的话：短句、少用「的」字堆叠。课堂默认。"
+            case .formal: return "规范书面语，术语完整、句式严谨，像正式讲义。适合讲座、答辩。"
+            case .neutral: return "清楚准确，不刻意口语化，也不过度正式。"
+            }
+        }
+    }
+
     @Published var engineKind: EngineKind { didSet { persist() } }
+    @Published var toneStyle: ToneStyle { didSet { persist() } }
     @Published var translationEngine: TranslationEngine { didSet { persist() } }
     @Published var outputMode: OutputMode { didSet { persist() } }
     @Published var transcriptionSpeed: TranscriptionSpeed { didSet { persist() } }
@@ -154,6 +175,7 @@ final class AppSettings: ObservableObject {
         let defaults = UserDefaults.standard
         engineKind = EngineKind(rawValue: defaults.string(forKey: Self.prefix + "engine") ?? "") ?? .whisper
         translationEngine = TranslationEngine(rawValue: defaults.string(forKey: Self.prefix + "transEngine") ?? "") ?? .server
+        toneStyle = ToneStyle(rawValue: defaults.string(forKey: Self.prefix + "tone") ?? "") ?? .casual
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
         translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality
         transcriptionSpeed = TranscriptionSpeed(rawValue: defaults.string(forKey: Self.prefix + "asrSpeed") ?? "") ?? .balanced
@@ -173,6 +195,7 @@ final class AppSettings: ObservableObject {
         let defaults = UserDefaults.standard
         defaults.set(engineKind.rawValue, forKey: Self.prefix + "engine")
         defaults.set(translationEngine.rawValue, forKey: Self.prefix + "transEngine")
+        defaults.set(toneStyle.rawValue, forKey: Self.prefix + "tone")
         defaults.set(outputMode.rawValue, forKey: Self.prefix + "outputMode")
         defaults.set(translationPriority.rawValue, forKey: Self.prefix + "transPriority")
         defaults.set(transcriptionSpeed.rawValue, forKey: Self.prefix + "asrSpeed")

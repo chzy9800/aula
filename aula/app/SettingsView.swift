@@ -254,6 +254,18 @@ struct SettingsView: View {
             }
             hint(settings.translationEngine.note)
             divider
+            settingRow("译文语气") {
+                Picker("", selection: $settings.toneStyle) {
+                    ForEach(AppSettings.ToneStyle.allCases) { tone in
+                        Text(tone.label).tag(tone)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 200)
+            }
+            hint(settings.toneStyle.note)
+            divider
             keyValue("翻译方式", "大模型流式翻译（逐字上屏）")
             keyValue("当前模型", classStore.asrLabel.isEmpty ? "未连接" : classStore.asrLabel)
             hint("译文只有一个来源，逐字长出来，不会整句替换——这是为了避免屏幕上反复闪。")
