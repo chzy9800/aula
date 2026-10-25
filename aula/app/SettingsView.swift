@@ -392,8 +392,8 @@ struct SettingsView: View {
             permissionRow("语音识别",
                           granted: speechGranted,
                           detail: speechGranted
-                            ? "已授权。Apple 语音引擎可用（识别语言包需另装）"
-                            : "用「Apple 语音」引擎时必须授权。点右侧按钮会弹系统窗",
+                            ? "已授权（raw 3）。Apple 语音引擎可用"
+                            : "未授权（raw \(speechStatus.rawValue)：0=没问过 1=受限 2=拒绝）。点右侧按钮会弹系统窗",
                           settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition",
                           actionTitle: model.requestingSpeechAuth ? "等待授权…" : (speechStatus == .notDetermined ? "请求授权" : "系统设置"),
                           onAction: speechStatus == .notDetermined ? {
