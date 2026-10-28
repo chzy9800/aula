@@ -100,6 +100,15 @@ final class ClassStore: ObservableObject {
     private let realtime = RealtimeClient()
     /// Apple 语音识别（可选引擎）。它不需要 VAD 切句，框架自己分段。
     private let appleSpeech = AppleSpeech()
+    /// macOS 26+ 的 SpeechAnalyzer 引擎（AirTranslate 用的同一套）。
+    /// 首字能到 0.1s，但识别准确率不如 whisper beam=5，所以作为可选引擎。
+    @available(macOS 26.0, *)
+    private lazy var appleSpeechV2 = AppleSpeechV2()
+    /// 当前是否走 V2（macOS 26+ 默认走 V2）
+    private var useAppleV2: Bool {
+        if #available(macOS 26.0, *) { return true }
+        return false
+    }
     /// Apple 本地翻译（macOS 15+）。懒加载：老系统上不该因为引用它就崩。
     @available(macOS 15.0, *)
     private lazy var appleTranslator = AppleTranslator()
@@ -304,11 +313,42 @@ final class ClassStore: ObservableObject {
         setPhase(.listening, "正在听课（麦克风）· \(sessionTitle)")
     }
 
+    private func feedApple(_ samples: [Int16]) {
+        if #available(macOS 26.0, *), useAppleV2 {
+            appleSpeechV2.feed(int16: samples)
+        } else {
+            appleSpeech.feed(int16: samples)
+        }
+    }
+
+    private func stopApple() {
+        appleSpeech.stop()
+        if #available(macOS 26.0, *) {
+            appleSpeechV2.stop()
+        }
+    }
+
     /// Apple 语音引擎：识别在本地流式完成，文本送服务端翻译并入库。
     /// 好处是首字快（框架自带分段，不用等静音），代价是需要语音识别授权与语言包。
     private func beginAppleMode() {
         DispatchQueue.main.async { self.setPhase(.starting, "正在启动 Apple 语音识别…") }
         appleSeq = 0
+        bindAppleCallbacks()
+        if #available(macOS 26.0, *), useAppleV2 {
+            if let failure = appleSpeechV2.start(locale: "es-ES") {
+                setPhase(.failed, failure)
+                return
+            }
+            ensureAppleSession()
+            if settings.translationEngine == .apple {
+                appleTranslator.activate(source: "es", target: "zh-Hans")
+            }
+            startedAt = Date()
+            startTimer()
+            setPhase(.listening, "正在听课（Apple 语音 · 新引擎）· \(sessionTitle)")
+            beginCapture()
+            return
+        }
         appleSpeech.onPartial = { [weak self] text in
             guard let self else { return }
             self.draft = Line(id: self.draftKey, source: text, target: "",
@@ -334,6 +374,30 @@ final class ClassStore: ObservableObject {
         startTimer()
         setPhase(.listening, "正在听课（Apple 语音）· \(sessionTitle)")
         beginCapture()
+    }
+
+    /// V1/V2 共用的回调绑定
+    private func bindAppleCallbacks() {
+        let partial: (String) -> Void = { [weak self] text in
+            guard let self else { return }
+            self.draft = Line(id: self.draftKey, source: text, target: "",
+                              refined: false, latencyMs: 0, at: Date(), streaming: true)
+        }
+        let final: (String) -> Void = { [weak self] text in
+            self?.commitAppleLine(text)
+        }
+        let failure: (String) -> Void = { [weak self] message in
+            guard let self, self.phase == .listening || self.phase == .starting else { return }
+            self.setPhase(.failed, message)
+        }
+        appleSpeech.onPartial = partial
+        appleSpeech.onFinal = final
+        appleSpeech.onError = failure
+        if #available(macOS 26.0, *) {
+            appleSpeechV2.onPartial = partial
+            appleSpeechV2.onFinal = final
+            appleSpeechV2.onError = failure
+        }
     }
 
     /// Apple 识别出的一句：先上屏原文，再异步补译文
@@ -465,7 +529,7 @@ final class ClassStore: ObservableObject {
             AppLog.write("mic: chunks=\(micChunks) peak=\(micPeak) srcRate=\(Int(buffer.format.sampleRate))")
         }
         if settings.engineKind == .apple {
-            appleSpeech.feed(int16: chunk)
+            feedApple(chunk)
         } else {
             vad.feed(samples: chunk)
         }
@@ -486,7 +550,7 @@ final class ClassStore: ObservableObject {
     }
 
     private func teardownCapture() {
-        appleSpeech.stop()
+        stopApple()
         if #available(macOS 15.0, *) {
             appleTranslator.deactivate()
         }
@@ -526,7 +590,7 @@ final class ClassStore: ObservableObject {
         systemAudio.onSamples = { [weak self] samples in
             guard let self else { return }
             if self.settings.engineKind == .apple {
-                self.appleSpeech.feed(int16: samples)
+                self.feedApple(samples)
             } else {
                 self.vad.feed(samples: samples)
             }

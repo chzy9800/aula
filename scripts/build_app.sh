@@ -126,6 +126,7 @@ swiftc -O -swift-version 5 -parse-as-library \
   "$ROOT/aula/app/L10n.swift" \
   "$ROOT/aula/app/MenuBarPanel.swift" \
   "$ROOT/aula/app/AppleSpeech.swift" \
+  "$ROOT/aula/app/AppleSpeechV2.swift" \
   "$ROOT/aula/app/AppleTranslator.swift" \
   "$ROOT/aula/app/ModelStore.swift" \
   "$ROOT/aula/app/ProviderStore.swift"
