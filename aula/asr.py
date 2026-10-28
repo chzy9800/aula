@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import base64
 import io
 import json
@@ -195,6 +196,38 @@ class OpenAICompatASR(BaseASR):
         }
 
 
+def _decode_audio_file(path: str):
+    """把任意音频文件解成 16k 单声道 float32 numpy 数组。
+
+    走 afconvert（macOS 自带）而不是 PyAV：当前环境的 PyAV 19 与
+    faster-whisper 1.2.1 不兼容（av.open 的 metadata_errors 参数已被移除），
+    直接传路径会抛 TypeError，整条文件转写失败。
+    """
+    import subprocess
+    import tempfile
+    import wave
+
+    import numpy as np
+
+    handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    target = handle.name
+    handle.close()
+    try:
+        subprocess.run(
+            ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", path, target],
+            check=True, capture_output=True, timeout=300,
+        )
+        with wave.open(target) as reader:
+            raw = reader.readframes(reader.getnframes())
+        return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    finally:
+        try:
+            os.unlink(target)
+        except OSError:
+            pass
+
+
+
 class WhisperLocalASR(BaseASR):
     """本地 faster-whisper。首次调用会下载模型（small ≈ 480MB）。"""
 
@@ -243,7 +276,10 @@ class WhisperLocalASR(BaseASR):
                 audio,
                 language=None if lang in ("", "auto") else lang,
                 vad_filter=True,
-                beam_size=1,
+                # beam_size=1 是贪心解码，快但错得离谱：实测同一段西语，
+                # beam=1 把 "tiene dos tipos de corriente" 解成 "en el DOS-T-POS-D-Corrinte"，
+                # beam=5 则完全正确。多花约 0.5s 换准确率，绝对值。
+                beam_size=5,
                 condition_on_previous_text=False,
             )
             text = " ".join(segment.text.strip() for segment in segments).strip()
@@ -258,15 +294,24 @@ class WhisperLocalASR(BaseASR):
         return await asyncio.to_thread(self._transcribe_file_sync, path, lang)
 
     def _transcribe_file_sync(self, path: str, lang: str) -> List["TimedSegment"]:
-        """整文件转写。faster-whisper 内部用 PyAV 解码，mp3/m4a/wav/mp4 都能直接读，
-        不需要我们先转成 16k wav——省掉一个 ffmpeg 依赖。"""
+        """整文件转写。
+
+        原本直接把路径交给 faster-whisper，让它用 PyAV 解码。但当前环境的
+        PyAV 19 与 faster-whisper 1.2.1 不兼容（`av.open(metadata_errors=...)`
+        参数已被移除），会抛 TypeError，整条文件转写直接失败。
+
+        改用 macOS 自带的 `afconvert` 先转成 16k 单声道 wav，再用 wave 模块读成
+        numpy 数组喂给模型——绕开 PyAV，也不引入 ffmpeg 依赖。
+        """
         model = self._load()
+        audio = _decode_audio_file(path)
         with self._model_lock:
             segments, _info = model.transcribe(
-                path,
+                audio,
                 language=None if lang in ("", "auto") else lang,
                 vad_filter=True,
-                beam_size=1,
+                # 同上：beam=1 会解出拼写字母，beam=5 才正确
+                beam_size=5,
                 condition_on_previous_text=False,
             )
             out: List[TimedSegment] = []

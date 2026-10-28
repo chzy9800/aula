@@ -213,7 +213,7 @@ final class AppSettings: ObservableObject {
         translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality
         transcriptionSpeed = TranscriptionSpeed(rawValue: defaults.string(forKey: Self.prefix + "asrSpeed") ?? "") ?? .balanced
         uiLanguage = L10n.Lang(rawValue: defaults.string(forKey: Self.prefix + "uiLanguage") ?? "") ?? .zh
-        paragraphSilenceMs = defaults.object(forKey: Self.prefix + "silenceMs") as? Double ?? 550
+        paragraphSilenceMs = defaults.object(forKey: Self.prefix + "silenceMs") as? Double ?? 900
         minSpeechMs = defaults.object(forKey: Self.prefix + "minSpeechMs") as? Double ?? 350
         maxSegmentMs = defaults.object(forKey: Self.prefix + "maxSegmentMs") as? Double ?? 15000
         newSessionEachStart = defaults.object(forKey: Self.prefix + "newSession") as? Bool ?? true

@@ -37,7 +37,9 @@ final class VadSegmenter {
     /// 草稿段（flags=1）
     var onPartial: ((Data) -> Void)?
 
-    init(silenceMs: Double = 550,
+    // 550ms 会把句子切碎：实测 "tiene dos tipos de corriente" 被切成
+    // "en el DOS-T-POS-D"，whisper 对碎片识别极差。900ms 让句子更完整。
+    init(silenceMs: Double = 900,
          minSpeechMs: Double = 350,
          maxSegmentMs: Double = 15000,
          partialMs: Double = 900,
