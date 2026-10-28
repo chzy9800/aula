@@ -65,3 +65,39 @@ cont.yield(AnalyzerInput(buffer: pcmBuffer))
 ## 参考
 
 `docs/probes/speech-transcriber-probe.swift` —— 可直接跑的探针（analyzeSequence 路径）。
+
+---
+
+## 第二轮调试记录（2026-10-28）
+
+### 已确认
+
+1. **音频格式要求**：必须是 **Float32 非交错**。`AVAudioFile(forReading:)` 默认给 Int16 交错，
+   analyzer 拿到会**静默无输出**（和 SFSpeech 同一个坑）。正确写法：
+   ```swift
+   let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+   ```
+2. `SpeechAnalyzer.bestAvailableAudioFormat` 是静态属性，但**有歧义重载**，直接调用编译不过。
+3. 去掉 `.fastResults` 不影响截断问题。
+
+### 仍卡住
+
+`analyzer.start(inputSequence:)` + `cont.yield(AnalyzerInput(buffer:))` 路径：
+- start 正常返回
+- 第 1 块读到 4096 frames
+- **`cont.yield` 阻塞**，第 2 块再没开始
+- 即使 `makeStream(bufferingPolicy: .unbounded)` 也一样
+
+推测：analyzer 对 inputSequence 的消费是延迟/拉取式的，yield 在它开始消费前会阻塞；
+或者需要先 await 某个「就绪」状态（如 `analyzer.state == .running`）。
+
+### 可行的替代路径
+
+`analyzeSequence(from: AVAudioFile)` **能工作**（首字 0.10s / 定稿 0.24s），
+但只返回第一句。如果继续用这条路，需要按 3–5 秒切分音频、逐段调用——
+代价是文件 IO 和段间延迟，失去"边说边出字"的优势。
+
+### 探针
+
+- `docs/probes/speech-transcriber-probe.swift` —— analyzeSequence 路径（可用，会截断）
+- `docs/probes/speech-transcriber-stream-probe.swift` —— inputSequence 路径（卡在 yield）
