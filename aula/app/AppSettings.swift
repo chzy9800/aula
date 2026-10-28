@@ -207,7 +207,7 @@ final class AppSettings: ObservableObject {
         let defaults = UserDefaults.standard
         engineKind = EngineKind(rawValue: defaults.string(forKey: Self.prefix + "engine") ?? "") ?? .whisper
         whisperModel = WhisperModel(rawValue: defaults.string(forKey: Self.prefix + "whisperModel") ?? "") ?? .small
-        translationEngine = TranslationEngine(rawValue: defaults.string(forKey: Self.prefix + "transEngine") ?? "") ?? .server
+        translationEngine = TranslationEngine(rawValue: defaults.string(forKey: Self.prefix + "transEngine") ?? "") ?? .apple
         toneStyle = ToneStyle(rawValue: defaults.string(forKey: Self.prefix + "tone") ?? "") ?? .casual
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
         translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality

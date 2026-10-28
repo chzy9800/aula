@@ -111,7 +111,7 @@ final class ClassStore: ObservableObject {
     }
     /// Apple 本地翻译（macOS 15+）。懒加载：老系统上不该因为引用它就崩。
     @available(macOS 15.0, *)
-    private lazy var appleTranslator = AppleTranslator()
+    private var appleTranslator: AppleTranslator { AppleTranslator.shared }
     private var appleSessionId: String?
     private var appleSeq = 0
     /// 段落静音阈值可调，所以 VAD 要能按当前设置重建

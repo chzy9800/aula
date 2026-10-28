@@ -427,6 +427,57 @@ func runRenderSettings(_ outputPath: String, category: String, lang: String = "z
     return 0
 }
 
+/// Apple 本地翻译自检：验证 TranslationSession 桥接是否真的能翻
+func runAppleTranslateProbe() -> Int32 {
+    _ = NSApplication.shared
+    setbuf(stdout, nil)
+    print("--- Apple 本地翻译 ---")
+    guard #available(macOS 15.0, *) else {
+        print("需要 macOS 15+")
+        return 1
+    }
+    let translator = AppleTranslator.shared
+    // 建一个可见窗口挂 hook（模拟主界面）
+    let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 360, height: 240),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    window.title = "翻译探针"
+    window.contentView = NSHostingView(rootView: TranslationHook(translator: translator))
+    window.orderFrontRegardless()
+    window.makeKeyAndOrderFront(nil)
+    // 先让 SwiftUI 把 hook 渲染出来、订阅上 configuration，再触发
+    for _ in 0..<10 {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+    }
+    translator.activate(source: "es", target: "zh-Hans")
+    for _ in 0..<10 {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+    }
+
+    let samples = [
+        "La instalación eléctrica de la vivienda tiene dos tipos de corriente.",
+        "Antes de manipular el cuadro eléctrico hay que consignar la instalación.",
+    ]
+    var results: [String?] = []
+    for text in samples {
+        var got: String?
+        var done = false
+        translator.translate(text) { value in
+            got = value
+            done = true
+        }
+        let deadline = Date().addingTimeInterval(20)
+        while !done && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
+        results.append(got)
+        print("原文: \(text)")
+        print("译文: \(got ?? "（失败/超时）")")
+    }
+    let ok = results.contains { $0 != nil }
+    print("PROBE \(ok ? "OK" : "FAIL")")
+    return ok ? 0 : 1
+}
+
 /// 只查语言包状态，不碰 TCC（不需要授权，不会崩）
 func runAppleAssetsProbe() -> Int32 {
     _ = NSApplication.shared
@@ -652,8 +703,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 语音识别自检必须在 NSApp 事件循环里跑：TCC 弹窗要靠它显示，
         // 在 run() 之前调用会让进程直接 abort（踩过 exit 134）
         let launchArgs = ProcessInfo.processInfo.arguments
+        if launchArgs.contains("--probe-apple-translate") {
+            exit(runAppleTranslateProbe())
+        }
         if launchArgs.contains("--probe-apple-assets") {
             exit(runAppleAssetsProbe())
+        }
+        if launchArgs.contains("--probe-apple-translate") {
+            exit(runAppleTranslateProbe())
         }
         if launchArgs.contains("--probe-apple-assets") {
             exit(runAppleAssetsProbe())

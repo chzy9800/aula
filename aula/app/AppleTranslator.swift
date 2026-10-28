@@ -14,6 +14,9 @@ import AppKit
 @available(macOS 15.0, *)
 final class AppleTranslator: ObservableObject {
 
+    /// 全局单例：主界面的 hook 和 ClassStore 共用同一个会话
+    static let shared = AppleTranslator()
+
     /// 触发 `.translationTask` 的配置；变化即重新建立会话
     @Published fileprivate var configuration: TranslationSession.Configuration?
 
@@ -46,16 +49,21 @@ final class AppleTranslator: ObservableObject {
     func activate(source: String, target: String) {
         sourceLang = source
         targetLang = target
-        if bridgeWindow == nil {
-            // 不能用 alpha=0 且放到屏幕外：那种窗口系统可能判定"不可见"，
-            // SwiftUI 的 .translationTask 就不会触发。放到屏幕角落 + 0.01 更稳。
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
+        // 不再自建窗口：实测 .borderless + 高透明度 + 1×1 的窗口不会触发
+        // .translationTask（探针 20 秒超时）。必须挂在真正可见的窗口上——
+        // 由主界面的 TranslationHook 负责（见 ClassView）。
+        if false {
+            // 实测：1×1 + alpha 0.01 的窗口**不会**触发 .translationTask（探针 20s 超时）。
+            // 换成 200×120 + alpha 0.02 这种"真实尺寸的隐形窗"才正常——
+            // 系统似乎按尺寸/面积判断窗口是否"可见"。放在屏幕右上角外沿，不挡内容。
+            let window = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 200, height: 120),
                                   styleMask: [.borderless],
                                   backing: .buffered, defer: false)
             window.isOpaque = false
-            window.alphaValue = 0.01
+            window.alphaValue = 0.02
             window.ignoresMouseEvents = true
             window.level = .normal
+            window.collectionBehavior = [.canJoinAllSpaces, .stationary]
             window.contentView = NSHostingView(rootView: TranslationBridge(translator: self))
             bridgeWindow = window
         }
@@ -126,6 +134,22 @@ final class AppleTranslator: ObservableObject {
 }
 
 // MARK: - SwiftUI 桥
+
+/// 挂在主界面上的桥：主界面可见 → .translationTask 一定触发
+@available(macOS 15.0, *)
+struct TranslationHook: View {
+    @ObservedObject var translator: AppleTranslator
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .translationTask(translator.configuration) { session in
+                FileHandle.standardError.write("[hook] translationTask 触发\n".data(using: .utf8)!)
+                AppLog.write("apple-translate: 会话已建立")
+                translator.attach(session)
+            }
+    }
+}
 
 @available(macOS 15.0, *)
 private struct TranslationBridge: View {
