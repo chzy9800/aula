@@ -109,27 +109,7 @@ echo "⑤ 编译 Swift…"
 mkdir -p "$BUILD/bin"
 swiftc -O -swift-version 5 -parse-as-library \
   -o "$BUILD/bin/aula" \
-  "$ROOT/aula/app/main.swift" \
-  "$ROOT/aula/app/Sidecar.swift" \
-  "$ROOT/aula/app/Vad.swift" \
-  "$ROOT/aula/app/Realtime.swift" \
-  "$ROOT/aula/app/ClassStore.swift" \
-  "$ROOT/aula/app/ClassView.swift" \
-  "$ROOT/aula/app/SystemAudio.swift" \
-  "$ROOT/aula/app/HotKey.swift" \
-  "$ROOT/aula/app/CaptionPanel.swift" \
-  "$ROOT/aula/app/AppLog.swift" \
-  "$ROOT/aula/app/CaptionStyle.swift" \
-  "$ROOT/aula/app/AppSettings.swift" \
-  "$ROOT/aula/app/SettingsView.swift" \
-  "$ROOT/aula/app/TranscriptLibrary.swift" \
-  "$ROOT/aula/app/L10n.swift" \
-  "$ROOT/aula/app/MenuBarPanel.swift" \
-  "$ROOT/aula/app/AppleSpeech.swift" \
-  "$ROOT/aula/app/AppleSpeechV2.swift" \
-  "$ROOT/aula/app/AppleTranslator.swift" \
-  "$ROOT/aula/app/ModelStore.swift" \
-  "$ROOT/aula/app/ProviderStore.swift"
+  "$ROOT"/aula/app/*.swift \
 
 echo "⑥ 组装 bundle…"
 # 不用 rm -rf 清旧包：一是安全闸门会拦（4000+ 文件），二是留一份旧版能回滚。

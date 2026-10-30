@@ -50,7 +50,7 @@ ASR_PROVIDERS = {
 # 速度也接近 medium，是"效果优先"时的首选。app 通过 AULA_ASR_MODEL 覆盖。
 DEFAULT_ASR_MODELS = {
     "openai": "whisper-1",
-    "whisper": "small",
+    "whisper": "medium",
     "mock": "mock",
     "gemini": "gemini-3.8-flash",
 }
@@ -248,6 +248,27 @@ def _module_available(name: str) -> bool:
 _FIELD_NAMES = {f.name for f in fields(Settings)}
 
 
+def _migrate_legacy_asr_default(config_file: Path, raw: Dict[str, Any]) -> None:
+    """旧版默认识别模型是 small，曾把它写进用户配置文件——那个值会永远压住
+    新默认 medium（small 对部分西语发音整句错，medium 实测全对）。
+
+    一次性升级：只把「恰好等于旧默认」的 small 改成 medium 并落盘，用户后来
+    明确选过 medium/turbo 的不动。标记文件防止每次启动都写盘。
+    """
+    marker = config_file.parent / ".migrated-medium-asr"
+    if marker.exists():
+        return
+    if raw.get("asr_model") == "small":
+        try:
+            raw["asr_model"] = "medium"
+            config_file.write_text(
+                json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            return  # 写不进去也别挡启动，环境变量/界面还能覆盖
+    marker.write_text("")
+
+
 def load(overrides: Optional[Dict[str, Any]] = None) -> Settings:
     """按优先级合并配置。未知键直接忽略，避免旧配置文件把程序打挂。"""
     data: Dict[str, Any] = {}
@@ -258,6 +279,7 @@ def load(overrides: Optional[Dict[str, Any]] = None) -> Settings:
             raw = json.loads(target.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 data.update({k: v for k, v in raw.items() if k in _FIELD_NAMES})
+                _migrate_legacy_asr_default(target, raw)
         except (json.JSONDecodeError, OSError):
             pass
 

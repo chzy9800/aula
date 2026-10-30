@@ -1024,6 +1024,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class AulaApp {
     static func main() {
         let args = CommandLine.arguments
+        // 必须最先跑：--probe-class 这类自检路径不经过 AppSettings，
+        // 但 Sidecar 读的是同一个 UserDefaults，迁移晚了就还拿着旧模型
+        AppSettings.migrateLegacyAsrDefault()
         if args.contains("--probe") {
             exit(runProbe())
         }

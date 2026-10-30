@@ -166,9 +166,9 @@ final class AppSettings: ObservableObject {
         var note: String {
             switch self {
             case .small:
-                return "约 480MB，最快，但西语识别准确率一般（当前默认）。"
+                return "约 480MB，最快，但西语识别准确率一般（TTS 探针里整句错）。"
             case .medium:
-                return "约 1.5GB，明显更准，CPU 上慢 2–3 倍。"
+                return "约 1.5GB，明显更准（探针里三句全对），CPU 上慢 2–3 倍。当前默认。"
             case .turbo:
                 return "约 800MB，准确率接近 large，速度接近 medium——效果和速度的最优折中。"
             }
@@ -182,6 +182,8 @@ final class AppSettings: ObservableObject {
     @Published var outputMode: OutputMode { didSet { persist() } }
     @Published var transcriptionSpeed: TranscriptionSpeed { didSet { persist() } }
     @Published var translationPriority: TranslationPriority { didSet { persist() } }
+    /// 本地识别模型：small 快（实测 1.15s/句）但对部分西语发音会整句错；
+    /// medium 准（3.26s/句，同样的句子完全正确）。改后重启服务生效。
 
     // —— 转写 ——
     /// 段落断句静音阈值（毫秒）。对应 AirTranslate 的 `Paragraph Break Silence`
@@ -205,8 +207,9 @@ final class AppSettings: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        Self.migrateLegacyAsrDefault(defaults)
         engineKind = EngineKind(rawValue: defaults.string(forKey: Self.prefix + "engine") ?? "") ?? .whisper
-        whisperModel = WhisperModel(rawValue: defaults.string(forKey: Self.prefix + "whisperModel") ?? "") ?? .small
+        whisperModel = WhisperModel(rawValue: defaults.string(forKey: Self.prefix + "whisperModel") ?? "") ?? .medium
         translationEngine = TranslationEngine(rawValue: defaults.string(forKey: Self.prefix + "transEngine") ?? "") ?? .apple
         toneStyle = ToneStyle(rawValue: defaults.string(forKey: Self.prefix + "tone") ?? "") ?? .casual
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
@@ -222,6 +225,17 @@ final class AppSettings: ObservableObject {
         speechVoiceID = defaults.string(forKey: Self.prefix + "speechVoice") ?? ""
         speechVolume = defaults.object(forKey: Self.prefix + "speechVolume") as? Double ?? 1.0
         speechRate = defaults.object(forKey: Self.prefix + "speechRate") as? Double ?? 0.5
+    }
+
+    /// 一次性迁移：识别默认从 small 换成 medium（small 对部分西语整句错，实测踩过）。
+    /// 必须是 static 且在程序入口就调用——`--probe-class` 这类自检路径不经过 AppSettings，
+    /// 但 Sidecar 读的是同一个 UserDefaults，迁移晚了就还拿着旧值。
+    static func migrateLegacyAsrDefault(_ defaults: UserDefaults = .standard) {
+        guard defaults.object(forKey: "aula.migrated.mediumAsrDefault") == nil else { return }
+        if defaults.string(forKey: "aula.settings.asrModel") == "small" {
+            defaults.removeObject(forKey: "aula.settings.asrModel")
+        }
+        defaults.set(true, forKey: "aula.migrated.mediumAsrDefault")
     }
 
     private func persist() {

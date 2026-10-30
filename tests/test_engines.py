@@ -57,7 +57,7 @@ class ProviderPickTest(unittest.TestCase):
 
     def test_default_models(self):
         self.assertEqual(config.Settings(asr_provider="openai").resolved_asr_model(), "whisper-1")
-        self.assertEqual(config.Settings(asr_provider="whisper", asr_model="").resolved_asr_model(), "small")
+        self.assertEqual(config.Settings(asr_provider="whisper", asr_model="").resolved_asr_model(), "medium")
 
 
 class TranslatorTest(unittest.TestCase):
