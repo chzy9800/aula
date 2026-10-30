@@ -38,7 +38,7 @@ final class AppSettings: ObservableObject {
         var note: String {
             switch self {
             case .quality:
-                return "只等大模型，译文一步到位，约 2.3 秒/句。不会出现二次替换。"
+                return "只等大模型，译文一步到位，约 2.3 秒/句。whisper 引擎下整句延迟约 5 秒，不建议。"
             case .speed:
                 return "专用翻译接口先出（实测 0.13 秒/句），大模型随后精修；两者差得远才替换。"
             }
@@ -213,7 +213,7 @@ final class AppSettings: ObservableObject {
         translationEngine = TranslationEngine(rawValue: defaults.string(forKey: Self.prefix + "transEngine") ?? "") ?? .apple
         toneStyle = ToneStyle(rawValue: defaults.string(forKey: Self.prefix + "tone") ?? "") ?? .casual
         outputMode = OutputMode(rawValue: defaults.string(forKey: Self.prefix + "outputMode") ?? "") ?? .bilingual
-        translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .quality
+        translationPriority = TranslationPriority(rawValue: defaults.string(forKey: Self.prefix + "transPriority") ?? "") ?? .speed
         transcriptionSpeed = TranscriptionSpeed(rawValue: defaults.string(forKey: Self.prefix + "asrSpeed") ?? "") ?? .balanced
         uiLanguage = L10n.Lang(rawValue: defaults.string(forKey: Self.prefix + "uiLanguage") ?? "") ?? .zh
         paragraphSilenceMs = defaults.object(forKey: Self.prefix + "silenceMs") as? Double ?? 900
